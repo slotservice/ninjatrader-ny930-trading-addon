@@ -1,0 +1,38 @@
+# NinjaTrader compiled artifacts (regenerated on every NT compile)
+*.dll
+*.pdb
+*.exe
+*.obj
+*.cache
+bin/
+obj/
+
+# NinjaScript compiled outputs (NT writes these next to the .cs files)
+NinjaTrader.Custom.dll
+NinjaTrader.Custom.pdb
+NinjaTrader.Custom.xml
+
+# Visual Studio / Rider scratch
+.vs/
+.idea/
+*.suo
+*.user
+*.csproj.user
+*.userprefs
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+$RECYCLE.BIN/
+
+# Local user preference file the AddOn writes to
+# (each user generates their own — should never be committed)
+ny930.settings
+
+# Editor backup files
+*~
+*.bak
+*.tmp
+*.swp
