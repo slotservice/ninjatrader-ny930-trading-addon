@@ -518,14 +518,28 @@ namespace NinjaTrader.NinjaScript.Strategies
             _saveTimeExitFired = false;
         }
 
+        // ── EntradaProgramada ─────────────────────────────────────
+        private DateTime EntradaProgramada()
+        {
+            DateTime now = DateTime.Now;
+            try
+            {
+                return new DateTime(now.Year, now.Month, now.Day,
+                                    EntryHour, EntryMinute, EntrySecond);
+            }
+            catch
+            {
+                return new DateTime(now.Year, now.Month, now.Day, 9, 29, 58);
+            }
+        }
+
         // ── ProgramarTimer ────────────────────────────────────────
         private void ProgramarTimer()
         {
             DescartarTimer();
 
             DateTime now       = DateTime.Now;
-            DateTime entryTime = new DateTime(now.Year, now.Month, now.Day,
-                                              EntryHour, EntryMinute, EntrySecond);
+            DateTime entryTime = EntradaProgramada();
 
             if (now >= entryTime) return;
 
@@ -1616,6 +1630,52 @@ namespace NinjaTrader.NinjaScript.Strategies
                         NY930Log.Info(SRC, "Orden de entrada cancelada manualmente.");
                     }
                     break;
+
+                case NY930ActionType.HedgeApplyParameters:
+                    AplicarParametrosDesdeUI(a.Parameters);
+                    break;
+            }
+        }
+
+        private void AplicarParametrosDesdeUI(NY930Parameters p)
+        {
+            if (p == null) return;
+            bool inTrade = exitOrdersPlaced;
+
+            try
+            {
+                if (p.EntryHour     != null) EntryHour     = Math.Max(0, Math.Min(23, p.EntryHour.Value));
+                if (p.EntryMinute   != null) EntryMinute   = Math.Max(0, Math.Min(59, p.EntryMinute.Value));
+                if (p.EntrySecond   != null) EntrySecond   = Math.Max(0, Math.Min(59, p.EntrySecond.Value));
+
+                if (!inTrade && p.Quantity        != null) Quantity        = Math.Max(1, p.Quantity.Value);
+                if (!inTrade && p.StopLossTicks   != null) StopLossTicks   = Math.Max(1, p.StopLossTicks.Value);
+                if (!inTrade && p.TakeProfitTicks != null) TakeProfitTicks = Math.Max(1, p.TakeProfitTicks.Value);
+
+                if (!inTrade && !string.IsNullOrEmpty(p.Direction))
+                {
+                    if (p.Direction.Equals("Long",  StringComparison.OrdinalIgnoreCase)) Direccion = DireccionEntrada.Long;
+                    else if (p.Direction.Equals("Short", StringComparison.OrdinalIgnoreCase)) Direccion = DireccionEntrada.Short;
+                    else                                                                       Direccion = DireccionEntrada.SinOperacion;
+                }
+
+                if (p.EnableBreakeven  != null) EnableBreakeven  = p.EnableBreakeven.Value;
+                if (p.EnableTrailing   != null) EnableTrailing   = p.EnableTrailing.Value;
+                if (p.EnableTrailingTP != null) EnableTrailingTP = p.EnableTrailingTP.Value;
+                if (p.EnablePartials   != null) EnablePartials   = p.EnablePartials.Value;
+                if (p.EnableTimeExit   != null) EnableTimeExit   = p.EnableTimeExit.Value;
+
+                if (p.EnableTpGapGuard != null) EnableTpGapGuard = p.EnableTpGapGuard.Value;
+                if (p.EnableSlGapGuard != null) EnableSlGapGuard = p.EnableSlGapGuard.Value;
+                if (p.TpGapGuardTicks  != null) TpGapGuardTicks  = Math.Max(0, p.TpGapGuardTicks.Value);
+                if (p.SlGapGuardTicks  != null) SlGapGuardTicks  = Math.Max(0, p.SlGapGuardTicks.Value);
+
+                NY930Log.Info(SRC, "Parametros aplicados desde UI.");
+                if (!ordersPlaced) ProgramarTimer();
+            }
+            catch (Exception ex)
+            {
+                NY930Log.Error(SRC, "AplicarParametros error: " + ex.Message);
             }
         }
 
@@ -1626,14 +1686,39 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 bool esLong   = (Direccion == DireccionEntrada.Long);
                 double upTicks = 0;
+                double upCcy   = 0;
                 if (entryFill > 0 && lastPrice > 0)
+                {
                     upTicks = ((esLong ? lastPrice - entryFill : entryFill - lastPrice) / TickSize);
+                    if (Instrument != null)
+                    {
+                        double tickValue = Instrument.MasterInstrument.PointValue * TickSize;
+                        int    qty       = contratosRestantes > 0 ? contratosRestantes : Quantity;
+                        upCcy = upTicks * tickValue * qty;
+                    }
+                }
 
                 var snap = new NY930HedgeSnapshot
                 {
                     Instrument         = Instrument != null ? Instrument.FullName : "(none)",
                     Timestamp          = DateTime.Now,
                     TickSize           = TickSize,
+                    EntryTime          = EntradaProgramada(),
+                    StopLossTicks      = StopLossTicks,
+                    TakeProfitTicks    = TakeProfitTicks,
+                    Partial1Ticks      = Partial1Ticks,
+                    Partial2Ticks      = Partial2Ticks,
+                    Partial1Contracts  = Partial1Contracts,
+                    Partial2Contracts  = Partial2Contracts,
+                    EnablePartials     = EnablePartials,
+                    EnableBreakeven    = EnableBreakeven,
+                    EnableTrailing     = EnableTrailing,
+                    EnableTrailingTP   = EnableTrailingTP,
+                    EnableTimeExit     = EnableTimeExit,
+                    EnableTpGapGuard   = EnableTpGapGuard,
+                    EnableSlGapGuard   = EnableSlGapGuard,
+                    TpGapGuardTicks    = TpGapGuardTicks,
+                    SlGapGuardTicks    = SlGapGuardTicks,
                     Direction          = Direccion.ToString(),
                     Quantity           = Quantity,
                     ContractsRemaining = contratosRestantes,
@@ -1647,6 +1732,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Partial2Done       = partial2Done,
                     LastPrice          = lastPrice,
                     UnrealizedTicks    = upTicks,
+                    UnrealizedCurrency = upCcy,
                     TradeStartTime     = tradeStartTime,
                     SessionDone        = sessionDone,
                     LastResult         = _lastResult

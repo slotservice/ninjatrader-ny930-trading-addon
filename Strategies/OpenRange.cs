@@ -617,14 +617,31 @@ namespace NinjaTrader.NinjaScript.Strategies
             _saveShortP2Price   = 0;
         }
 
+        // ── EntradaProgramada ─────────────────────────────────────
+        // Today's entry DateTime (used by the AddOn for the live
+        // countdown banner and by ProgramarTimer for the schedule).
+        private DateTime EntradaProgramada()
+        {
+            DateTime now = DateTime.Now;
+            try
+            {
+                return new DateTime(now.Year, now.Month, now.Day,
+                                    EntryHour, EntryMinute, EntrySecond);
+            }
+            catch
+            {
+                // Out-of-range field set via UI — fall back to default.
+                return new DateTime(now.Year, now.Month, now.Day, 9, 29, 58);
+            }
+        }
+
         // ── ProgramarTimer ────────────────────────────────────────
         private void ProgramarTimer()
         {
             DescartarTimer();
 
             DateTime now       = DateTime.Now;
-            DateTime entryTime = new DateTime(now.Year, now.Month, now.Day,
-                                              EntryHour, EntryMinute, EntrySecond);
+            DateTime entryTime = EntradaProgramada();
 
             if (now >= entryTime) return;
 
@@ -2031,6 +2048,61 @@ namespace NinjaTrader.NinjaScript.Strategies
                 case NY930ActionType.OpenRangePartialClose:
                     AplicarParcialManual(a.IntArg);
                     break;
+
+                case NY930ActionType.OpenRangeApplyParameters:
+                    AplicarParametrosDesdeUI(a.Parameters);
+                    break;
+            }
+        }
+
+        private void AplicarParametrosDesdeUI(NY930Parameters p)
+        {
+            if (p == null) return;
+            // Refuse mid-trade edits to anything that would invalidate
+            // the currently-working orders. The UI greys these out
+            // anyway, but we double-check on this side too.
+            bool inTrade = exitOrdersPlaced;
+
+            try
+            {
+                if (p.EntryHour     != null) EntryHour     = Math.Max(0, Math.Min(23, p.EntryHour.Value));
+                if (p.EntryMinute   != null) EntryMinute   = Math.Max(0, Math.Min(59, p.EntryMinute.Value));
+                if (p.EntrySecond   != null) EntrySecond   = Math.Max(0, Math.Min(59, p.EntrySecond.Value));
+
+                if (!inTrade && p.Quantity            != null) Quantity            = Math.Max(1, p.Quantity.Value);
+                if (!inTrade && p.EnableLong          != null) EnableLong          = p.EnableLong.Value;
+                if (!inTrade && p.EnableShort         != null) EnableShort         = p.EnableShort.Value;
+                if (!inTrade && p.TicksLong           != null) TicksLong           = Math.Max(1, p.TicksLong.Value);
+                if (!inTrade && p.TicksShort          != null) TicksShort          = Math.Max(1, p.TicksShort.Value);
+                if (!inTrade && p.StopLossLongTicks   != null) StopLossLongTicks   = Math.Max(1, p.StopLossLongTicks.Value);
+                if (!inTrade && p.StopLossShortTicks  != null) StopLossShortTicks  = Math.Max(1, p.StopLossShortTicks.Value);
+                if (!inTrade && p.TakeProfitLongTicks != null) TakeProfitLongTicks = Math.Max(1, p.TakeProfitLongTicks.Value);
+                if (!inTrade && p.TakeProfitShortTicks!= null) TakeProfitShortTicks= Math.Max(1, p.TakeProfitShortTicks.Value);
+
+                if (p.EnableBreakeven  != null) EnableBreakeven  = p.EnableBreakeven.Value;
+                if (p.EnableTrailing   != null) EnableTrailing   = p.EnableTrailing.Value;
+                if (p.EnableTrailingTP != null) EnableTrailingTP = p.EnableTrailingTP.Value;
+                if (p.EnablePartials   != null) EnablePartials   = p.EnablePartials.Value;
+                if (p.EnableTimeExit   != null) EnableTimeExit   = p.EnableTimeExit.Value;
+
+                if (p.EnableTpGapGuard != null) EnableTpGapGuard = p.EnableTpGapGuard.Value;
+                if (p.EnableSlGapGuard != null) EnableSlGapGuard = p.EnableSlGapGuard.Value;
+                if (p.TpGapGuardTicks  != null) TpGapGuardTicks  = Math.Max(0, p.TpGapGuardTicks.Value);
+                if (p.SlGapGuardTicks  != null) SlGapGuardTicks  = Math.Max(0, p.SlGapGuardTicks.Value);
+
+                if (p.EnableSingleStopReverseProtection != null) EnableSingleStopReverseProtection = p.EnableSingleStopReverseProtection.Value;
+                if (p.SingleStopReverseTicks            != null) SingleStopReverseTicks            = Math.Max(0, p.SingleStopReverseTicks.Value);
+
+                NY930Log.Info(SRC, "Parametros aplicados desde UI.");
+                if (!ordersPlaced)
+                {
+                    // Re-arm the timer with the new entry time.
+                    ProgramarTimer();
+                }
+            }
+            catch (Exception ex)
+            {
+                NY930Log.Error(SRC, "AplicarParametros error: " + ex.Message);
             }
         }
 
@@ -2144,14 +2216,45 @@ namespace NinjaTrader.NinjaScript.Strategies
                 double fill  = inLong ? longFillPrice : (inShort ? shortFillPrice : 0);
 
                 double upTicks = 0;
+                double upCcy   = 0;
                 if (fill > 0 && lastPrice > 0)
+                {
                     upTicks = ((inLong ? lastPrice - fill : fill - lastPrice) / TickSize);
+                    if (Instrument != null)
+                    {
+                        double tickValue = Instrument.MasterInstrument.PointValue * TickSize;
+                        int    qty       = contratosRestantes > 0 ? contratosRestantes : Quantity;
+                        upCcy = upTicks * tickValue * qty;
+                    }
+                }
 
                 var snap = new NY930OpenRangeSnapshot
                 {
                     Instrument          = Instrument != null ? Instrument.FullName : "(none)",
                     Timestamp           = DateTime.Now,
                     TickSize            = TickSize,
+                    EntryTime           = EntradaProgramada(),
+                    TicksLong           = TicksLong,
+                    TicksShort          = TicksShort,
+                    StopLossLongTicks   = StopLossLongTicks,
+                    StopLossShortTicks  = StopLossShortTicks,
+                    TakeProfitLongTicks = TakeProfitLongTicks,
+                    TakeProfitShortTicks= TakeProfitShortTicks,
+                    Partial1Ticks       = Partial1Ticks,
+                    Partial2Ticks       = Partial2Ticks,
+                    Partial1Contracts   = Partial1Contracts,
+                    Partial2Contracts   = Partial2Contracts,
+                    EnablePartials      = EnablePartials,
+                    EnableBreakeven     = EnableBreakeven,
+                    EnableTrailing      = EnableTrailing,
+                    EnableTrailingTP    = EnableTrailingTP,
+                    EnableTimeExit      = EnableTimeExit,
+                    EnableTpGapGuard    = EnableTpGapGuard,
+                    EnableSlGapGuard    = EnableSlGapGuard,
+                    TpGapGuardTicks     = TpGapGuardTicks,
+                    SlGapGuardTicks     = SlGapGuardTicks,
+                    EnableSingleStopReverseProtection = EnableSingleStopReverseProtection,
+                    SingleStopReverseTicks            = SingleStopReverseTicks,
                     EnableLong          = EnableLong,
                     EnableShort         = EnableShort,
 
@@ -2177,9 +2280,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Partial1Done = partial1Done,
                     Partial2Done = partial2Done,
 
-                    LastPrice       = lastPrice,
-                    UnrealizedTicks = upTicks,
-                    TradeStartTime  = tradeStartTime,
+                    LastPrice          = lastPrice,
+                    UnrealizedTicks    = upTicks,
+                    UnrealizedCurrency = upCcy,
+                    TradeStartTime     = tradeStartTime,
                     SessionDone     = sessionDone,
                     LastResult      = _lastResult
                 };

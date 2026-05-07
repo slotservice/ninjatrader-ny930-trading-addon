@@ -30,6 +30,28 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public string   Instrument;
         public DateTime Timestamp;
         public double   TickSize;
+        public DateTime EntryTime;       // Today's scheduled entry (for countdown)
+        public int      TicksLong;       // Distance config (for parameter form)
+        public int      TicksShort;
+        public int      StopLossLongTicks;
+        public int      StopLossShortTicks;
+        public int      TakeProfitLongTicks;
+        public int      TakeProfitShortTicks;
+        public int      Partial1Ticks;
+        public int      Partial2Ticks;
+        public int      Partial1Contracts;
+        public int      Partial2Contracts;
+        public bool     EnablePartials;
+        public bool     EnableBreakeven;
+        public bool     EnableTrailing;
+        public bool     EnableTrailingTP;
+        public bool     EnableTimeExit;
+        public bool     EnableTpGapGuard;
+        public bool     EnableSlGapGuard;
+        public int      TpGapGuardTicks;
+        public int      SlGapGuardTicks;
+        public bool     EnableSingleStopReverseProtection;
+        public int      SingleStopReverseTicks;
         public bool     EnableLong;
         public bool     EnableShort;
 
@@ -57,6 +79,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // Live PnL
         public double LastPrice;
         public double UnrealizedTicks;
+        public double UnrealizedCurrency; // accurate $ value computed by the strategy
 
         // Trade lifecycle
         public DateTime TradeStartTime;
@@ -71,6 +94,22 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public string   Instrument;
         public DateTime Timestamp;
         public double   TickSize;
+        public DateTime EntryTime;
+        public int      StopLossTicks;
+        public int      TakeProfitTicks;
+        public int      Partial1Ticks;
+        public int      Partial2Ticks;
+        public int      Partial1Contracts;
+        public int      Partial2Contracts;
+        public bool     EnablePartials;
+        public bool     EnableBreakeven;
+        public bool     EnableTrailing;
+        public bool     EnableTrailingTP;
+        public bool     EnableTimeExit;
+        public bool     EnableTpGapGuard;
+        public bool     EnableSlGapGuard;
+        public int      TpGapGuardTicks;
+        public int      SlGapGuardTicks;
         public string   Direction; // "Long" / "Short" / "None"
         public int      Quantity;
         public int      ContractsRemaining;
@@ -86,6 +125,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
         public double LastPrice;
         public double UnrealizedTicks;
+        public double UnrealizedCurrency;
 
         public DateTime TradeStartTime;
         public bool     SessionDone;
@@ -128,6 +168,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         OpenRangeBreakeven,
         OpenRangeTrailingTrigger,
         OpenRangePartialClose,
+        OpenRangeApplyParameters,    // bulk parameter update
 
         // Hedge
         HedgeBuyNow,
@@ -136,14 +177,51 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         HedgeBreakeven,
         HedgeTrailingTrigger,
         HedgePartialClose,
-        HedgeCancelEntry
+        HedgeCancelEntry,
+        HedgeApplyParameters         // bulk parameter update
+    }
+
+    // Bulk parameter update payload shared by both strategies.
+    // Null fields mean "leave unchanged".
+    public sealed class NY930Parameters
+    {
+        public int?    EntryHour;
+        public int?    EntryMinute;
+        public int?    EntrySecond;
+        public int?    Quantity;
+        public int?    StopLossTicks;
+        public int?    TakeProfitTicks;
+        // Open Range only
+        public bool?   EnableLong;
+        public bool?   EnableShort;
+        public int?    TicksLong;
+        public int?    TicksShort;
+        public int?    StopLossLongTicks;
+        public int?    StopLossShortTicks;
+        public int?    TakeProfitLongTicks;
+        public int?    TakeProfitShortTicks;
+        // Hedge only
+        public string  Direction;          // "Long" / "Short" / "None" (null = unchanged)
+        // Common toggles
+        public bool?   EnableBreakeven;
+        public bool?   EnableTrailing;
+        public bool?   EnableTrailingTP;
+        public bool?   EnablePartials;
+        public bool?   EnableTimeExit;
+        public bool?   EnableTpGapGuard;
+        public bool?   EnableSlGapGuard;
+        public int?    TpGapGuardTicks;
+        public int?    SlGapGuardTicks;
+        public bool?   EnableSingleStopReverseProtection;
+        public int?    SingleStopReverseTicks;
     }
 
     public sealed class NY930Action
     {
-        public NY930ActionType Type;
-        public int             IntArg;     // ticks / contracts depending on Type
-        public string          StringArg;  // optional (e.g. instrument filter)
+        public NY930ActionType  Type;
+        public int              IntArg;     // ticks / contracts depending on Type
+        public string           StringArg;  // optional (e.g. instrument filter)
+        public NY930Parameters  Parameters; // for *ApplyParameters actions
     }
 
     // ─────────────────────────────────────────────────────────

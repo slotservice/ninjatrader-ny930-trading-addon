@@ -149,6 +149,16 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _backBtn.Visibility = (view is NY930HomeView) ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        // Used by views that need to perform a one-time auto-navigation
+        // (e.g. trade-just-closed → result screen) and want to make sure
+        // they're still the active view before pushing the next one.
+        public bool CurrentViewIs<T>() where T : FrameworkElement
+        {
+            return _currentView is T;
+        }
+
+        public FrameworkElement CurrentView { get { return _currentView; } }
+
         private void BuildMenuPopup()
         {
             var border = new Border
