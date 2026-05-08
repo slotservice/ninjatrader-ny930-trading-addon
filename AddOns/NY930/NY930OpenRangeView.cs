@@ -221,7 +221,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private void BuildActionsPanel(StackPanel root)
         {
             var stack = new StackPanel();
-            _hdrActions = NY930Theme.NavySectionHeader(NY930Localization.T("trade.section.management"));
+            _hdrActions = NY930Theme.NavySectionHeader(NY930Localization.T("trade.section.actions"));
             stack.Children.Add(_hdrActions);
 
             var row = new Grid();
@@ -735,7 +735,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
         public void RefreshLocalization()
         {
-            _hdrActions.Text    = NY930Localization.T("trade.section.management");
+            _hdrActions.Text    = NY930Localization.T("trade.section.actions");
             _hdrManagement.Text = NY930Localization.T("trade.section.management");
             _hdrLive.Text       = NY930Localization.T("nav.openrange").ToUpperInvariant();
             _btnBreakeven.Content = NY930Localization.T("trade.action.breakeven");

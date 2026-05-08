@@ -172,6 +172,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
             // Trade view sections
             { "trade.section.management", "POSITION MANAGEMENT" },
+            { "trade.section.actions",    "ACTIONS" },
             { "trade.section.targets",    "TARGETS" },
             { "trade.section.stops",      "STOP" },
             { "trade.action.breakeven",   "BREAKEVEN" },
@@ -341,6 +342,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             { "status.no_chart",          "Abra un gráfico y adjunte la estrategia para comenzar" },
 
             { "trade.section.management", "GESTIÓN DE POSICIÓN" },
+            { "trade.section.actions",    "ACCIONES" },
             { "trade.section.targets",    "OBJETIVOS" },
             { "trade.section.stops",      "STOP" },
             { "trade.action.breakeven",   "BREAKEVEN" },

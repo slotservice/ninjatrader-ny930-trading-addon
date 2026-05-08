@@ -24,6 +24,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private readonly Border _header;
         private readonly TextBlock _brand;
         private readonly TextBlock _tagline;
+        private readonly StackPanel _brandStack;
         private readonly Button _backBtn;
         private readonly ToggleButton _menuBtn;
         private readonly Popup _menuPopup;
@@ -71,7 +72,12 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _backBtn.Click += (s, e) => Show(new NY930HomeView(this));
             Grid.SetColumn(_backBtn, 0);
 
-            var brandStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            // Shell brand: shown only on the Home view. On every
+            // other view the trade-specific TradeHeader carries
+            // the NY930 + strategy name, so showing the brand here
+            // again would be redundant (one of the v1.2 review
+            // findings).
+            _brandStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             _brand = new TextBlock
             {
                 Text     = "NY930",
@@ -89,9 +95,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 1, 0, 0)
             };
-            brandStack.Children.Add(_brand);
-            brandStack.Children.Add(_tagline);
-            Grid.SetColumn(brandStack, 1);
+            _brandStack.Children.Add(_brand);
+            _brandStack.Children.Add(_tagline);
+            Grid.SetColumn(_brandStack, 1);
 
             _menuBtn = new ToggleButton
             {
@@ -110,7 +116,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             Grid.SetColumn(_menuBtn, 2);
 
             headerGrid.Children.Add(_backBtn);
-            headerGrid.Children.Add(brandStack);
+            headerGrid.Children.Add(_brandStack);
             headerGrid.Children.Add(_menuBtn);
             _header.Child = headerGrid;
             Grid.SetRow(_header, 0);
@@ -145,8 +151,12 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _currentView = view;
             _host.Content = view;
 
+            bool isHome = view is NY930HomeView;
             // Show "back" arrow on every page except Home.
-            _backBtn.Visibility = (view is NY930HomeView) ? Visibility.Collapsed : Visibility.Visible;
+            _backBtn.Visibility    = isHome ? Visibility.Collapsed : Visibility.Visible;
+            // Show shell brand only on Home — every other view has
+            // its own TradeHeader with the NY930 wordmark.
+            _brandStack.Visibility = isHome ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // Used by views that need to perform a one-time auto-navigation
