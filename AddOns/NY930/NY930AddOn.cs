@@ -203,9 +203,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 var shell = new NY930ShellView();
                 var border = new Border
                 {
-                    Width           = 320,
-                    Background      = NY930Theme.BgBaseBrush,
-                    BorderBrush     = NY930Theme.BorderBrush,
+                    Width           = 340,
+                    Background      = NY930Theme.BgNavyBrush,
+                    BorderBrush     = NY930Theme.BorderNavyBrush,
                     BorderThickness = new Thickness(1, 0, 0, 0),
                     Child           = shell
                 };

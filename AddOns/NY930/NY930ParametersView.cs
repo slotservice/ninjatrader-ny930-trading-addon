@@ -74,7 +74,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         {
             _shell = shell;
             _isOpenRange = isOpenRange;
-            Background = NY930Theme.BgBaseBrush;
+            Background = NY930Theme.BgNavyBrush;
 
             var scroll = new ScrollViewer
             {
@@ -83,27 +83,36 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             };
             Children.Add(scroll);
 
-            var root = new StackPanel { Margin = new Thickness(14, 12, 14, 14) };
+            var root = new StackPanel();
             scroll.Content = root;
 
-            BuildSchedule(root);
-            BuildRange(root);
-            BuildManagement(root);
-            BuildGuards(root);
+            // Header — same trade header used by the rest of the
+            // navy views, with an "EDITAR" tag on the right.
+            var header = new NY930Theme.TradeHeader(isOpenRange ? "APERTURA BREAKOUT" : "APERTURA");
+            header.StatusTag.Update("EDITAR", NY930Theme.BlueAccent);
+            root.Children.Add(header);
+
+            var inner = new StackPanel { Margin = new Thickness(12, 0, 12, 12) };
+            root.Children.Add(inner);
+
+            BuildSchedule(inner);
+            BuildRange(inner);
+            BuildManagement(inner);
+            BuildGuards(inner);
 
             _applyNote = new TextBlock
             {
                 Text       = NY930Localization.T("params.apply.note"),
                 FontSize   = 9,
-                Foreground = NY930Theme.TextLowBrush,
+                Foreground = NY930Theme.TextNavyLowBrush,
                 TextWrapping = TextWrapping.Wrap,
                 Margin     = new Thickness(0, 4, 0, 8)
             };
-            root.Children.Add(_applyNote);
+            inner.Children.Add(_applyNote);
 
-            _btnApply = NY930Theme.BigActionButton(NY930Localization.T("params.apply"), NY930Theme.GoldBright, true);
+            _btnApply = NY930Theme.NavyPrimaryButton(NY930Localization.T("params.apply"));
             _btnApply.Click += (s, e) => ApplyChanges();
-            root.Children.Add(_btnApply);
+            inner.Children.Add(_btnApply);
 
             // Initial fill from latest snapshot
             LoadFromSnapshot();
@@ -117,7 +126,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private void BuildSchedule(StackPanel root)
         {
             var stack = new StackPanel();
-            _hdrSchedule = NY930Theme.SectionHeader(NY930Localization.T("params.section.schedule"));
+            _hdrSchedule = NY930Theme.NavySectionHeader(NY930Localization.T("params.section.schedule"));
             stack.Children.Add(_hdrSchedule);
 
             var timeRow = new Grid();
@@ -138,9 +147,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             Grid.SetColumn(lbl, 0);
             timeRow.Children.Add(lbl);
 
-            _hourBox   = NY930Theme.InputBox(50);
-            _minuteBox = NY930Theme.InputBox(50);
-            _secondBox = NY930Theme.InputBox(50);
+            _hourBox   = NY930Theme.NavyInputBox(50);
+            _minuteBox = NY930Theme.NavyInputBox(50);
+            _secondBox = NY930Theme.NavyInputBox(50);
             _hourBox.TextAlignment   = TextAlignment.Center;
             _minuteBox.TextAlignment = TextAlignment.Center;
             _secondBox.TextAlignment = TextAlignment.Center;
@@ -160,16 +169,16 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             timeRow.Children.Add(_secondBox);
             stack.Children.Add(timeRow);
 
-            _qtyBox = NY930Theme.InputBox();
+            _qtyBox = NY930Theme.NavyInputBox();
             stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.quantity"), _qtyBox));
 
             if (!_isOpenRange)
             {
                 _directionBox = new ComboBox
                 {
-                    Background      = NY930Theme.BgInputBrush,
-                    Foreground      = NY930Theme.TextHiBrush,
-                    BorderBrush     = NY930Theme.BorderBrush,
+                    Background      = NY930Theme.BgNavyInputBrush,
+                    Foreground      = NY930Theme.TextNavyHiBrush,
+                    BorderBrush     = NY930Theme.BorderNavyBrush,
                     BorderThickness = new Thickness(1),
                     FontSize        = 11
                 };
@@ -180,28 +189,28 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 stack.Children.Add(NY930Theme.FormField(NY930Localization.T("hedge.direction"), _directionBox));
             }
 
-            root.Children.Add(NY930Theme.Panel(stack, new Thickness(0, 0, 0, 10)));
+            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(0, 0, 0, 10)));
         }
 
         private void BuildRange(StackPanel root)
         {
             var stack = new StackPanel();
-            _hdrRange = NY930Theme.SectionHeader(NY930Localization.T("params.section.range"));
+            _hdrRange = NY930Theme.NavySectionHeader(NY930Localization.T("params.section.range"));
             stack.Children.Add(_hdrRange);
 
             if (_isOpenRange)
             {
-                _enableLong  = NY930Theme.Toggle(NY930Localization.T("params.enable_long"));
-                _enableShort = NY930Theme.Toggle(NY930Localization.T("params.enable_short"));
+                _enableLong  = NY930Theme.NavyToggle(NY930Localization.T("params.enable_long"));
+                _enableShort = NY930Theme.NavyToggle(NY930Localization.T("params.enable_short"));
                 stack.Children.Add(_enableLong);
                 stack.Children.Add(_enableShort);
 
-                _ticksLongBox  = NY930Theme.InputBox();
-                _ticksShortBox = NY930Theme.InputBox();
-                _slLongBox     = NY930Theme.InputBox();
-                _tpLongBox     = NY930Theme.InputBox();
-                _slShortBox    = NY930Theme.InputBox();
-                _tpShortBox    = NY930Theme.InputBox();
+                _ticksLongBox  = NY930Theme.NavyInputBox();
+                _ticksShortBox = NY930Theme.NavyInputBox();
+                _slLongBox     = NY930Theme.NavyInputBox();
+                _tpLongBox     = NY930Theme.NavyInputBox();
+                _slShortBox    = NY930Theme.NavyInputBox();
+                _tpShortBox    = NY930Theme.NavyInputBox();
 
                 stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.long_offset"),  _ticksLongBox));
                 stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.long_sl"),      _slLongBox));
@@ -212,26 +221,26 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             }
             else
             {
-                _slBox = NY930Theme.InputBox();
-                _tpBox = NY930Theme.InputBox();
+                _slBox = NY930Theme.NavyInputBox();
+                _tpBox = NY930Theme.NavyInputBox();
                 stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.sl_ticks"), _slBox));
                 stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.tp_ticks"), _tpBox));
             }
 
-            root.Children.Add(NY930Theme.Panel(stack, new Thickness(0, 0, 0, 10)));
+            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(0, 0, 0, 10)));
         }
 
         private void BuildManagement(StackPanel root)
         {
             var stack = new StackPanel();
-            _hdrManagement = NY930Theme.SectionHeader(NY930Localization.T("params.section.management"));
+            _hdrManagement = NY930Theme.NavySectionHeader(NY930Localization.T("params.section.management"));
             stack.Children.Add(_hdrManagement);
 
-            _enableBE       = NY930Theme.Toggle(NY930Localization.T("params.enable_be"));
-            _enableTrail    = NY930Theme.Toggle(NY930Localization.T("params.enable_trail"));
-            _enableTrailTP  = NY930Theme.Toggle(NY930Localization.T("params.enable_traiTP"));
-            _enablePartials = NY930Theme.Toggle(NY930Localization.T("params.enable_partials"));
-            _enableTimeExit = NY930Theme.Toggle(NY930Localization.T("params.enable_time_exit"));
+            _enableBE       = NY930Theme.NavyToggle(NY930Localization.T("params.enable_be"));
+            _enableTrail    = NY930Theme.NavyToggle(NY930Localization.T("params.enable_trail"));
+            _enableTrailTP  = NY930Theme.NavyToggle(NY930Localization.T("params.enable_traiTP"));
+            _enablePartials = NY930Theme.NavyToggle(NY930Localization.T("params.enable_partials"));
+            _enableTimeExit = NY930Theme.NavyToggle(NY930Localization.T("params.enable_time_exit"));
 
             stack.Children.Add(_enableBE);
             stack.Children.Add(_enableTrail);
@@ -239,34 +248,34 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             stack.Children.Add(_enablePartials);
             stack.Children.Add(_enableTimeExit);
 
-            root.Children.Add(NY930Theme.Panel(stack, new Thickness(0, 0, 0, 10)));
+            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(0, 0, 0, 10)));
         }
 
         private void BuildGuards(StackPanel root)
         {
             var stack = new StackPanel();
-            _hdrGuards = NY930Theme.SectionHeader(NY930Localization.T("params.section.guards"));
+            _hdrGuards = NY930Theme.NavySectionHeader(NY930Localization.T("params.section.guards"));
             stack.Children.Add(_hdrGuards);
 
-            _enableTpGuard = NY930Theme.Toggle(NY930Localization.T("params.enable_tp_guard"));
-            _tpGuardTicks  = NY930Theme.InputBox();
+            _enableTpGuard = NY930Theme.NavyToggle(NY930Localization.T("params.enable_tp_guard"));
+            _tpGuardTicks  = NY930Theme.NavyInputBox();
             stack.Children.Add(_enableTpGuard);
             stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.tp_guard_ticks"), _tpGuardTicks));
 
-            _enableSlGuard = NY930Theme.Toggle(NY930Localization.T("params.enable_sl_guard"));
-            _slGuardTicks  = NY930Theme.InputBox();
+            _enableSlGuard = NY930Theme.NavyToggle(NY930Localization.T("params.enable_sl_guard"));
+            _slGuardTicks  = NY930Theme.NavyInputBox();
             stack.Children.Add(_enableSlGuard);
             stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.sl_guard_ticks"), _slGuardTicks));
 
             if (_isOpenRange)
             {
-                _enableSingleRev = NY930Theme.Toggle(NY930Localization.T("params.enable_single_rev"));
-                _singleRevTicks  = NY930Theme.InputBox();
+                _enableSingleRev = NY930Theme.NavyToggle(NY930Localization.T("params.enable_single_rev"));
+                _singleRevTicks  = NY930Theme.NavyInputBox();
                 stack.Children.Add(_enableSingleRev);
                 stack.Children.Add(NY930Theme.FormField(NY930Localization.T("params.single_rev_ticks"), _singleRevTicks));
             }
 
-            root.Children.Add(NY930Theme.Panel(stack, new Thickness(0, 0, 0, 10)));
+            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(0, 0, 0, 10)));
         }
 
         // ── Snapshot binding ───────────────────────────────────

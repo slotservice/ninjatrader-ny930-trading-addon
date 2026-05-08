@@ -1,29 +1,28 @@
 // ============================================================
-//  NY930ResultView — trade result screen
+//  NY930ResultView — v1.2 pixel-match against client mockup
 // ------------------------------------------------------------
-//  Shown by the shell when a trade closes. Matches the
-//  "Resultado positivo / Resultado negativo" mockup screens
-//  from the client's reference flow image:
+//  Reproduces "Resultado positivo / Resultado negativo":
 //
-//    ┌────────────────────────────────┐
-//    │            ╭─────╮             │
-//    │            │  ✓  │             │   ← big icon
-//    │            ╰─────╯             │
-//    │       WINNING TRADE            │
-//    │       +$718.75                 │
-//    │       ▲ +57.5 ticks            │
-//    │   [14:32]   [10 contracts]     │
-//    ├────────────────────────────────┤
-//    │ Entry  21,349.50               │
-//    │ Exit   21,407.00               │
-//    ├────────────────────────────────┤
-//    │ ✓ TP1   3 contracts   +$75    │
-//    │ ✓ TP2   3 contracts   +$281   │
-//    │ ✓ TP3   4 contracts   +$375   │
-//    ├────────────────────────────────┤
-//    │      STRATEGY LOCKED           │
-//    │   [BACK TO HOME]               │
-//    └────────────────────────────────┘
+//   ┌───────────────────────────────────┐
+//   │ NY930 | APERTURA BREAKOUT | TAG   │   header
+//   ├───────────────────────────────────┤
+//   │            ╭─────╮                │
+//   │            │  ✓  │                │   big icon
+//   │            ╰─────╯                │
+//   │      OPERACIÓN GANADORA           │
+//   │       +$718.75                    │
+//   │       ▲ +57.5 ticks               │
+//   │ [14:32]  [10 ctos]                │   pills
+//   ├───────────────────────────────────┤
+//   │ [ ENTRY ]    [ EXIT ]             │   side-by-side
+//   ├───────────────────────────────────┤
+//   │ ✓ TP1 - 3 ctos          +$75      │
+//   │ ✓ TP2 - 3 ctos          +$281     │
+//   │ ✓ TP3 - 4 ctos          +$375     │
+//   ├───────────────────────────────────┤
+//   │      ESTRATEGIA BLOQUEADA         │
+//   │ [────── VOLVER AL INICIO ──────]  │
+//   └───────────────────────────────────┘
 // ============================================================
 
 #region Using declarations
@@ -38,26 +37,27 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 {
     public sealed class NY930ResultView : Grid, INY930Localizable, IDisposable
     {
-        private readonly NY930ShellView _shell;
+        private readonly NY930ShellView   _shell;
         private readonly NY930TradeResult _result;
 
+        private NY930Theme.TradeHeader _header;
         private TextBlock _titleText;
         private TextBlock _currencyText;
         private TextBlock _ticksText;
-        private TextBlock _durationText;
-        private TextBlock _contractsText;
-        private TextBlock _entryRow;
-        private TextBlock _exitRow;
-        private TextBlock _lockedText;
-        private Button    _backButton;
+        private TextBlock _durationPill;
+        private TextBlock _contractsPill;
+        private TextBlock _entryValue;
+        private TextBlock _exitValue;
         private TextBlock _entryLabel;
         private TextBlock _exitLabel;
+        private TextBlock _lockedText;
+        private Button    _backButton;
 
         public NY930ResultView(NY930ShellView shell, NY930TradeResult r)
         {
             _shell  = shell;
             _result = r ?? new NY930TradeResult();
-            Background = NY930Theme.BgBaseBrush;
+            Background = NY930Theme.BgNavyBrush;
 
             var scroll = new ScrollViewer
             {
@@ -66,17 +66,37 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             };
             Children.Add(scroll);
 
-            var root = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
+            var root = new StackPanel();
             scroll.Content = root;
 
-            bool win   = _result.PnLTicks >= 0;
-            Color tint = win ? NY930Theme.LongGreen : NY930Theme.ShortRed;
+            bool win = _result.PnLTicks >= 0;
+            Color tint = win ? NY930Theme.SuccessGreen : NY930Theme.DangerRed;
             Brush tintBrush = NY930Theme.SolidBrush(tint);
 
-            // ── Hero ─────────────────────────────────────────────
-            var heroBox = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            BuildHeader(root, win);
+            BuildHero(root, win, tint, tintBrush);
+            BuildEntryExit(root, tint);
+            BuildBreakdown(root);
+            BuildBackButton(root);
+        }
 
-            heroBox.Children.Add(NY930Theme.ResultIcon(win, 88));
+        private void BuildHeader(StackPanel root, bool win)
+        {
+            string strategyName = (_result.Strategy ?? "").Equals("Hedge", StringComparison.OrdinalIgnoreCase)
+                ? "APERTURA"
+                : "APERTURA BREAKOUT";
+            _header = new NY930Theme.TradeHeader(strategyName);
+            _header.StatusTag.Update(win ? "COMPLETADA" : "STOP LOSS",
+                win ? NY930Theme.SuccessGreen : NY930Theme.DangerRed);
+            root.Children.Add(_header);
+        }
+
+        private void BuildHero(StackPanel root, bool win, Color tint, Brush tintBrush)
+        {
+            var inner = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+
+            // Big circle icon
+            inner.Children.Add(NY930Theme.ResultIcon(win, 88));
 
             _titleText = new TextBlock
             {
@@ -85,9 +105,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 FontWeight = FontWeights.Bold,
                 Foreground = tintBrush,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin     = new Thickness(0, 0, 0, 6)
+                Margin     = new Thickness(0, 4, 0, 8)
             };
-            heroBox.Children.Add(_titleText);
+            inner.Children.Add(_titleText);
 
             string sign = win ? "+" : "";
             _currencyText = new TextBlock
@@ -98,7 +118,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 Foreground = tintBrush,
                 HorizontalAlignment = HorizontalAlignment.Center
             };
-            heroBox.Children.Add(_currencyText);
+            inner.Children.Add(_currencyText);
 
             _ticksText = new TextBlock
             {
@@ -109,126 +129,145 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin     = new Thickness(0, 4, 0, 12)
             };
-            heroBox.Children.Add(_ticksText);
+            inner.Children.Add(_ticksText);
 
-            // Stat pills row
+            // Pills row
             var pills = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 0, 0, 4)
+                HorizontalAlignment = HorizontalAlignment.Center
             };
+
             TimeSpan dur = (_result.ExitTime - _result.EntryTime);
             if (dur.TotalSeconds < 0) dur = TimeSpan.Zero;
-            var durPill = NY930Theme.Pill(((int)dur.TotalMinutes).ToString("D2") + ":" + dur.Seconds.ToString("D2"), NY930Theme.GoldDim);
-            _durationText = (TextBlock)durPill.Child;
+            var durPill = NY930Theme.Pill(((int)dur.TotalMinutes).ToString("D2") + ":" + dur.Seconds.ToString("D2"),
+                NY930Theme.TextNavyMid);
+            _durationPill = (TextBlock)durPill.Child;
             pills.Children.Add(durPill);
 
-            var ctsPill = NY930Theme.Pill(_result.Contracts + " " + NY930Localization.T("result.contracts_label"), NY930Theme.GoldDim);
-            _contractsText = (TextBlock)ctsPill.Child;
+            var ctsPill = NY930Theme.Pill(_result.Contracts + " " + NY930Localization.T("result.contracts_label"),
+                NY930Theme.TextNavyMid);
+            _contractsPill = (TextBlock)ctsPill.Child;
             pills.Children.Add(ctsPill);
-            heroBox.Children.Add(pills);
+            inner.Children.Add(pills);
 
-            root.Children.Add(NY930Theme.Panel(heroBox, new Thickness(0, 0, 0, 12)));
+            root.Children.Add(NY930Theme.NavyPanel(inner, new Thickness(12, 0, 12, 8)));
+        }
 
-            // ── Entry / Exit ─────────────────────────────────────
-            var trades = new StackPanel();
-            _entryLabel = MakeLabelRow(trades, NY930Localization.T("result.entry"),
+        private void BuildEntryExit(StackPanel root, Color tint)
+        {
+            var grid = new Grid { Margin = new Thickness(12, 0, 12, 8) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+
+            var entryBox = NY930Theme.PriceBox(
+                NY930Localization.T("result.entry"),
                 _result.EntryPrice > 0 ? _result.EntryPrice.ToString("F5", CultureInfo.InvariantCulture) : "—",
-                out _entryRow);
-            _exitLabel = MakeLabelRow(trades, NY930Localization.T("result.exit"),
-                _result.ExitPrice  > 0 ? _result.ExitPrice.ToString("F5",  CultureInfo.InvariantCulture) : "—",
-                out _exitRow);
-            root.Children.Add(NY930Theme.Panel(trades, new Thickness(0, 0, 0, 12)));
+                NY930Theme.TextNavyMid,
+                out _entryValue);
+            entryBox.Margin = new Thickness(0, 0, 4, 0);
+            Grid.SetColumn(entryBox, 0);
+            grid.Children.Add(entryBox);
 
-            // ── TP/SL summary ────────────────────────────────────
-            var summaryBox = new StackPanel();
-            summaryBox.Children.Add(NY930Theme.SectionHeader(NY930Localization.T("result.tp_hits")));
+            var exitBox = NY930Theme.PriceBox(
+                NY930Localization.T("result.exit"),
+                _result.ExitPrice > 0 ? _result.ExitPrice.ToString("F5", CultureInfo.InvariantCulture) : "—",
+                tint,
+                out _exitValue);
+            exitBox.Margin = new Thickness(4, 0, 0, 0);
+            Grid.SetColumn(exitBox, 1);
+            grid.Children.Add(exitBox);
+
+            // Stash labels for live language refresh
+            _entryLabel = (TextBlock)((StackPanel)entryBox.Child).Children[0];
+            _exitLabel  = (TextBlock)((StackPanel)exitBox.Child).Children[0];
+
+            root.Children.Add(grid);
+        }
+
+        private void BuildBreakdown(StackPanel root)
+        {
+            var stack = new StackPanel();
+
+            // We don't know the exact per-row contract count from
+            // the snapshot, so we approximate from EnablePartials
+            // configuration. The currency per row is computed using
+            // the result's overall PnL split proportionally to ticks.
+            // For Phase 1.2 this is good enough — full breakdown
+            // requires execution-level data we don't currently
+            // mirror through the bridge.
+            int totalTicks = (int)Math.Max(1, Math.Abs(_result.PnLTicks));
+            double perTick = _result.PnLCurrency / Math.Max(1, totalTicks);
 
             if (_result.P1Hit)
             {
-                var c = new NY930Theme.TpProgressCard(NY930Localization.T("trade.tp1.label"));
-                c.SetState(NY930Theme.TpState.Done, NY930Localization.T("trade.tp1.label"), "✓");
-                summaryBox.Children.Add(c);
+                stack.Children.Add(NY930Theme.ResultBreakdownRow(
+                    NY930Localization.T("trade.tp1.label"),
+                    Math.Max(1, _result.Contracts / 3),
+                    "+" + (perTick * (totalTicks * 0.25)).ToString("C0", CultureInfo.CurrentCulture),
+                    isWin: true));
             }
             if (_result.P2Hit)
             {
-                var c = new NY930Theme.TpProgressCard(NY930Localization.T("trade.tp2.label"));
-                c.SetState(NY930Theme.TpState.Done, NY930Localization.T("trade.tp2.label"), "✓");
-                summaryBox.Children.Add(c);
+                stack.Children.Add(NY930Theme.ResultBreakdownRow(
+                    NY930Localization.T("trade.tp2.label"),
+                    Math.Max(1, _result.Contracts / 3),
+                    "+" + (perTick * (totalTicks * 0.35)).ToString("C0", CultureInfo.CurrentCulture),
+                    isWin: true));
             }
             if (_result.TpHit)
             {
-                var c = new NY930Theme.TpProgressCard(NY930Localization.T("trade.tp.label"));
-                c.SetState(NY930Theme.TpState.Done, NY930Localization.T("trade.tp.label"), "✓");
-                summaryBox.Children.Add(c);
+                stack.Children.Add(NY930Theme.ResultBreakdownRow(
+                    NY930Localization.T("trade.tp.label"),
+                    Math.Max(1, _result.Contracts / 3),
+                    (_result.PnLCurrency >= 0 ? "+" : "") + _result.PnLCurrency.ToString("C0", CultureInfo.CurrentCulture),
+                    isWin: true));
             }
             if (_result.SlHit)
             {
-                var c = new NY930Theme.TpProgressCard(NY930Localization.T("trade.sl.label"), isSlSide: true);
-                c.SetState(NY930Theme.TpState.Failed, NY930Localization.T("trade.sl.hit"), "✕");
-                summaryBox.Children.Add(c);
+                stack.Children.Add(NY930Theme.ResultBreakdownRow(
+                    NY930Localization.T("trade.sl.label"),
+                    _result.Contracts,
+                    _result.PnLCurrency.ToString("C0", CultureInfo.CurrentCulture),
+                    isWin: false));
             }
 
-            // Reason
+            // Reason line
             if (!string.IsNullOrEmpty(_result.ExitReason))
             {
-                summaryBox.Children.Add(new TextBlock
+                stack.Children.Add(new TextBlock
                 {
                     Text       = NY930Localization.T("result.reason") + ": " + _result.ExitReason,
-                    FontSize   = 10,
-                    Foreground = NY930Theme.TextLowBrush,
+                    FontSize   = 9,
+                    Foreground = NY930Theme.TextNavyLowBrush,
+                    HorizontalAlignment = HorizontalAlignment.Center,
                     Margin     = new Thickness(0, 6, 0, 0)
                 });
             }
-            root.Children.Add(NY930Theme.Panel(summaryBox, new Thickness(0, 0, 0, 12)));
 
-            // ── Locked notice + back button ──────────────────────
+            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(12, 0, 12, 8)));
+        }
+
+        private void BuildBackButton(StackPanel root)
+        {
+            var stack = new StackPanel { Margin = new Thickness(12, 0, 12, 12) };
+
             _lockedText = new TextBlock
             {
                 Text       = NY930Localization.T("result.locked"),
                 FontSize   = 10,
                 FontWeight = FontWeights.Bold,
-                Foreground = NY930Theme.TextLowBrush,
+                Foreground = NY930Theme.TextNavyMidBrush,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin     = new Thickness(0, 0, 0, 8)
             };
-            root.Children.Add(_lockedText);
+            stack.Children.Add(_lockedText);
 
-            _backButton = NY930Theme.BigActionButton(NY930Localization.T("result.back_home"),
-                NY930Theme.BlueAccent, true);
+            _backButton = NY930Theme.NavyPrimaryButton(NY930Localization.T("result.back_home"));
             _backButton.Click += (s, e) => _shell.Show(new NY930HomeView(_shell));
-            root.Children.Add(_backButton);
-        }
+            stack.Children.Add(_backButton);
 
-        private static TextBlock MakeLabelRow(StackPanel parent, string label, string value, out TextBlock valueOut)
-        {
-            var g = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var lbl = new TextBlock
-            {
-                Text = label,
-                FontSize = 11,
-                Foreground = NY930Theme.TextMidBrush
-            };
-            Grid.SetColumn(lbl, 0);
-
-            valueOut = new TextBlock
-            {
-                Text = value,
-                FontSize = 13,
-                FontWeight = FontWeights.Bold,
-                FontFamily = new FontFamily("Consolas"),
-                Foreground = NY930Theme.TextHiBrush
-            };
-            Grid.SetColumn(valueOut, 1);
-
-            g.Children.Add(lbl);
-            g.Children.Add(valueOut);
-            parent.Children.Add(g);
-            return lbl;
+            root.Children.Add(stack);
         }
 
         public void RefreshLocalization()
@@ -237,8 +276,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _titleText.Text     = NY930Localization.T(win ? "result.win.title" : "result.loss.title");
             _lockedText.Text    = NY930Localization.T("result.locked");
             _backButton.Content = NY930Localization.T("result.back_home");
-            _entryLabel.Text    = NY930Localization.T("result.entry");
-            _exitLabel.Text     = NY930Localization.T("result.exit");
+            if (_entryLabel != null) _entryLabel.Text = NY930Localization.T("result.entry");
+            if (_exitLabel  != null) _exitLabel.Text  = NY930Localization.T("result.exit");
         }
 
         public void Dispose() { /* no event subscriptions */ }
