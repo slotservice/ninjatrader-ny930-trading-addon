@@ -25,7 +25,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using NinjaTrader.Gui;
-using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.Tools;
 #endregion
 
@@ -37,9 +36,11 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private static NTWindow      _shellWindow;
         private static NY930ShellView _shellView;
 
-        // Per-chart docked panels.
-        private static readonly Dictionary<ChartWindow, FrameworkElement> _chartPanels
-            = new Dictionary<ChartWindow, FrameworkElement>();
+        // Per-chart docked panels. We key by Window because the
+        // exact chart window class name is not stable across NT8
+        // versions, so we don't take a typed reference to it.
+        private static readonly Dictionary<Window, FrameworkElement> _chartPanels
+            = new Dictionary<Window, FrameworkElement>();
 
         private NTMenuItem _addOnMenuItem;
         private NTMenuItem _newMenuRoot;
@@ -67,6 +68,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
         protected override void OnWindowCreated(Window window)
         {
+            if (window == null) return;
+
             ControlCenter cc = window as ControlCenter;
             if (cc != null)
             {
@@ -74,13 +77,14 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 return;
             }
 
-            ChartWindow ch = window as ChartWindow;
-            if (ch != null)
+            // Detect chart windows by type name. The actual class
+            // name varies by NT8 version (Chart, ChartWindow, etc.)
+            // and isn't always public, so a string match keeps the
+            // AddOn portable.
+            if (LooksLikeChartWindow(window))
             {
-                // Defer until the chart's WPF tree is fully realised.
-                if (ch.IsLoaded) AttachChartPanel(ch);
-                else             ch.Loaded += OnChartLoaded;
-                return;
+                if (window.IsLoaded) AttachChartPanel(window);
+                else                 window.Loaded += OnChartLoaded;
             }
         }
 
@@ -97,15 +101,24 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                     _newMenuRoot   = null;
                 }
 
-                ChartWindow ch = window as ChartWindow;
-                if (ch != null && _chartPanels.ContainsKey(ch))
+                if (window != null && _chartPanels.ContainsKey(window))
                 {
-                    var panel = _chartPanels[ch];
+                    var panel = _chartPanels[window];
                     if (panel is IDisposable d) d.Dispose();
-                    _chartPanels.Remove(ch);
+                    _chartPanels.Remove(window);
                 }
             }
             catch { /* don't crash on shutdown */ }
+        }
+
+        private static bool LooksLikeChartWindow(Window w)
+        {
+            if (w == null) return false;
+            string t = w.GetType().Name ?? string.Empty;
+            // Match common NT8 chart window class names without
+            // taking a hard typed reference to any of them.
+            return t.IndexOf("Chart", StringComparison.OrdinalIgnoreCase) >= 0
+                && t.IndexOf("ControlCenter", StringComparison.OrdinalIgnoreCase) < 0;
         }
 
         // ── Control Center menu ──────────────────────────────────
@@ -179,24 +192,24 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
         private void OnChartLoaded(object sender, RoutedEventArgs e)
         {
-            ChartWindow ch = sender as ChartWindow;
+            Window ch = sender as Window;
             if (ch == null) return;
             ch.Loaded -= OnChartLoaded;
             AttachChartPanel(ch);
         }
 
-        private void AttachChartPanel(ChartWindow ch)
+        private void AttachChartPanel(Window ch)
         {
             try
             {
                 if (_chartPanels.ContainsKey(ch)) return;
 
-                // Strategy A: find the chart's main Grid container and
-                // add a new column on the right that hosts our panel.
+                // Find the chart's main Grid container and add a new
+                // column on the right that hosts our panel.
                 Grid mainGrid = FindMainChartGrid(ch);
                 if (mainGrid == null)
                 {
-                    NY930Log.Warn("AddOn", "ChartWindow main grid not found — falling back to floating panel.");
+                    NY930Log.Warn("AddOn", "Chart main grid not found — falling back to floating panel.");
                     return;
                 }
 
@@ -210,7 +223,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                     Child           = shell
                 };
 
-                // Insert as a new column after the existing content.
                 int newColIndex = mainGrid.ColumnDefinitions.Count;
                 mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 Grid.SetColumn(border, newColIndex);
@@ -218,7 +230,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 mainGrid.Children.Add(border);
 
                 _chartPanels[ch] = border;
-                NY930Log.Info("AddOn", "NY930 chart panel injected into ChartWindow.");
+                NY930Log.Info("AddOn", "NY930 chart panel injected into chart window (" + ch.GetType().Name + ").");
             }
             catch (Exception ex)
             {
