@@ -378,11 +378,13 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             var hourGroup = new StackPanel { Orientation = Orientation.Horizontal,
                                               HorizontalAlignment = HorizontalAlignment.Center,
                                               VerticalAlignment   = VerticalAlignment.Center };
-            // Same width bump as OpenRangeView — see comment there.
-            _hh = NY930Theme.FInput("9",  36);
-            _hm = NY930Theme.FInput("29", 36);
-            _hs = NY930Theme.FInput("58", 36);
-            _ampm = NY930Theme.FSelect(46);
+            // Inputs sized so the whole row fits inside the 250px
+            // panel without the hour digit getting clipped.
+            _hh = NY930Theme.FInput("9",  30);
+            _hm = NY930Theme.FInput("29", 30);
+            _hs = NY930Theme.FInput("58", 30);
+            _ampm = NY930Theme.FSelect(40);
+            _ampm.Margin = new Thickness(4, 0, 0, 0);
             _ampm.Items.Add("AM");
             _ampm.Items.Add("PM");
             _ampm.SelectedIndex = 0;
@@ -395,6 +397,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             Grid.SetColumn(hourGroup, 1); row.Children.Add(hourGroup);
 
             _btnActivarH = NY930Theme.ActionButton("ACTIVAR");
+            _btnActivarH.Padding = new Thickness(6, 3, 6, 3);
             _btnActivarH.Click += (s, e) => ActivarHorario();
             Grid.SetColumn(_btnActivarH, 2); row.Children.Add(_btnActivarH);
 
@@ -672,7 +675,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // ── Schedule activate/deactivate ──────────────────────
         private void ActivarHorario()
         {
-            ApplyParametersToStrategy();
+            // Send all params + arm Time mode so the strategy waits
+            // for the configured Hour/Minute/Second instead of trying
+            // to fire immediately.
+            ApplyParametersToStrategy(entryMode: "Time");
 
             int hh = ParseInt(_hh.Text) ?? 9;
             int mm = ParseInt(_hm.Text) ?? 29;
@@ -695,6 +701,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private void DesactivarHorario()
         {
             _scheduleArmed = false;
+            // Disarm at the strategy level so a stale schedule
+            // doesn't fire after the user pressed STOP.
+            ApplyParametersToStrategy(entryMode: "Manual");
             _scheduleForm.Visibility = Visibility.Visible;
             _scheduleCountdown.Visibility = Visibility.Collapsed;
             _countdownTb.Text = "00:00:00";
@@ -721,7 +730,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // ── Precio activate / deactivate ──────────────────────
         private void ActivarPrecio()
         {
-            ApplyParametersToStrategy();
             double price;
             if (!double.TryParse(_priceInput.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out price)
                 || price <= 0)
@@ -729,29 +737,33 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 FlashError(_priceInput);
                 return;
             }
+            // Direction is required for Price mode — the strategy
+            // needs to know whether to enter long or short when the
+            // trigger fires. Without a side selected we'd just wait
+            // forever, so flag it to the user.
+            if (_selectedSide != "buy" && _selectedSide != "sell")
+            {
+                FlashError(_btnBuy);
+                FlashError(_btnSell);
+                return;
+            }
 
             _precioActiveTb.Text = price.ToString("N2", CultureInfo.CurrentCulture);
             _precioForm.Visibility   = Visibility.Collapsed;
             _precioActive.Visibility = Visibility.Visible;
 
-            // Tell the strategy to start price-trigger monitoring.
-            // (Wired in Step 9 — strategy handles this action.)
-            NY930Bridge.RequestHedgeAction(new NY930Action
-            {
-                Type   = NY930ActionType.HedgeApplyParameters,
-                Parameters = new NY930Parameters
-                {
-                    // EntryPrice is handled by Step 9 (new field).
-                    // For now we send an immediate Buy/Sell only when
-                    // the strategy implements price-trigger mode.
-                }
-            });
+            // Send all parameters with EntryMode=Price + EntryPrice.
+            // Hedge.cs reads these and arms _priceEntryArmed in
+            // OnMarketData (see Hedge.cs lines 1708-1731).
+            ApplyParametersToStrategy(entryMode: "Price", entryPrice: price);
         }
 
         private void DesactivarPrecio()
         {
             _precioActive.Visibility = Visibility.Collapsed;
             _precioForm.Visibility   = Visibility.Visible;
+            // Disarm price monitoring at the strategy level.
+            ApplyParametersToStrategy(entryMode: "Manual");
         }
 
         private void FlashError(Control c)
@@ -766,7 +778,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // ── Manual entry ──────────────────────────────────────
         private void DoManualEntry()
         {
-            ApplyParametersToStrategy();
+            // Manual mode implies the strategy should NOT wait for a
+            // schedule or price trigger — fire immediately on the
+            // selected side.
+            ApplyParametersToStrategy(entryMode: "Manual");
             if (_selectedSide == "buy")
                 NY930Bridge.RequestHedgeAction(new NY930Action { Type = NY930ActionType.HedgeBuyNow });
             else if (_selectedSide == "sell")
@@ -776,7 +791,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         }
 
         // ── Apply parameters to strategy ──────────────────────
-        private void ApplyParametersToStrategy()
+        // entryMode/entryPrice are passed by ActivarHorario / Activar
+        // Precio / DoManualEntry so the strategy knows which entry
+        // path to arm. Null = leave unchanged.
+        private void ApplyParametersToStrategy(string entryMode = null, double? entryPrice = null)
         {
             int hh = ParseInt(_hh.Text) ?? 9;
             int mm = ParseInt(_hm.Text) ?? 29;
@@ -797,6 +815,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 StopLossTicks   = ParseInt(_cfgSl.Text),
                 TakeProfitTicks = ParseInt(_cfgTp.Text),
                 Direction   = direction,
+                EntryMode   = entryMode,
+                EntryPrice  = entryPrice,
 
                 EnableBreakeven  = _accBe.IsOn,
                 EnableTrailing   = _accTs.IsOn,
@@ -805,7 +825,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 EnableTpGapGuard = _accGg.IsOn,
                 EnableSlGapGuard = _accGg.IsOn,
                 TpGapGuardTicks  = ParseInt(_tpGgTicks.Text),
-                SlGapGuardTicks  = ParseInt(_slGgTicks.Text)
+                SlGapGuardTicks  = ParseInt(_slGgTicks.Text),
+                TimeExitDurationSeconds = ParseInt(_stDuration.Text),
+                TimeExitMode            = StModeKey(),
+                CloseIfBeyondTP         = _stBeyondTpTog != null && _stBeyondTpTog.IsOn,
             };
 
             NY930Bridge.RequestHedgeAction(new NY930Action
@@ -840,6 +863,24 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             if (s.Direction == "Long" && _selectedSide != "buy")  SelectSide("buy");
             if (s.Direction == "Short" && _selectedSide != "sell") SelectSide("sell");
 
+            // Avanzada accordion + Salida por Tiempo restoration
+            // mirrors NY930OpenRangeView so the user sees the
+            // strategy's actual config on reload.
+            if (_accBe  != null) _accBe.Set(s.EnableBreakeven);
+            if (_accTs  != null) _accTs.Set(s.EnableTrailing);
+            if (_accPar != null) _accPar.Set(s.EnablePartials);
+            if (_accGg  != null) _accGg.Set(s.EnableTpGapGuard || s.EnableSlGapGuard || s.EnableTrailingTP);
+            if (_accSt  != null) _accSt.Set(s.EnableTimeExit);
+            if (s.TpGapGuardTicks > 0 && _tpGgTicks != null && string.IsNullOrEmpty(_tpGgTicks.Text))
+                _tpGgTicks.Text = s.TpGapGuardTicks.ToString();
+            if (s.SlGapGuardTicks > 0 && _slGgTicks != null && string.IsNullOrEmpty(_slGgTicks.Text))
+                _slGgTicks.Text = s.SlGapGuardTicks.ToString();
+            if (_stDuration != null && s.TimeExitDurationSeconds > 0
+                && string.IsNullOrEmpty(_stDuration.Text))
+                _stDuration.Text = s.TimeExitDurationSeconds.ToString();
+            RestoreStModeFromKey(s.TimeExitMode);
+            if (_stBeyondTpTog != null) _stBeyondTpTog.Set(s.CloseIfBeyondTP);
+
             // Auto-route to in-trade view on fill.
             if (s.InPosition && _shell.CurrentViewIs<NY930HedgeView>())
                 _shell.Show(new NY930ProgressView(_shell, isOpenRange: false));
@@ -854,6 +895,28 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out v))
                 return v;
             return null;
+        }
+
+        // Map dropdown index → strategy enum string. Strategy uses
+        // English enum names; dropdown shows Spanish labels.
+        private string StModeKey()
+        {
+            if (_stMode == null) return null;
+            switch (_stMode.SelectedIndex)
+            {
+                case 0:  return "CloseAlways";
+                case 1:  return "CloseIfPositive";
+                case 2:  return "PlaceTPAfterTime";
+                default: return null;
+            }
+        }
+
+        private void RestoreStModeFromKey(string key)
+        {
+            if (_stMode == null || string.IsNullOrEmpty(key)) return;
+            if      (key.Equals("CloseAlways",      StringComparison.OrdinalIgnoreCase)) _stMode.SelectedIndex = 0;
+            else if (key.Equals("CloseIfPositive",  StringComparison.OrdinalIgnoreCase)) _stMode.SelectedIndex = 1;
+            else if (key.Equals("PlaceTPAfterTime", StringComparison.OrdinalIgnoreCase)) _stMode.SelectedIndex = 2;
         }
 
         public void RefreshLocalization() { /* labels are Spanish */ }

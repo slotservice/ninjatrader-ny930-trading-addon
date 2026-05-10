@@ -52,6 +52,12 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public int      SlGapGuardTicks;
         public bool     EnableSingleStopReverseProtection;
         public int      SingleStopReverseTicks;
+        // Salida por Tiempo state — exposed so the UI can restore
+        // the duration / mode / "Cerrar si superó TP" controls on
+        // panel reload.
+        public int      TimeExitDurationSeconds;
+        public string   TimeExitMode;
+        public bool     CloseIfBeyondTP;
         public bool     EnableLong;
         public bool     EnableShort;
 
@@ -110,6 +116,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public bool     EnableSlGapGuard;
         public int      TpGapGuardTicks;
         public int      SlGapGuardTicks;
+        public int      TimeExitDurationSeconds;
+        public string   TimeExitMode;
+        public bool     CloseIfBeyondTP;
         public string   Direction; // "Long" / "Short" / "None"
         public int      Quantity;
         public int      ContractsRemaining;
@@ -216,6 +225,13 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public int?    SlGapGuardTicks;
         public bool?   EnableSingleStopReverseProtection;
         public int?    SingleStopReverseTicks;
+
+        // Salida por Tiempo (Time Exit) sub-fields. The mode string
+        // matches the strategy enum names: "CloseAlways",
+        // "CloseIfPositive", "PlaceTPAfterTime".
+        public int?    TimeExitDurationSeconds;
+        public string  TimeExitMode;
+        public bool?   CloseIfBeyondTP;
     }
 
     public sealed class NY930Action

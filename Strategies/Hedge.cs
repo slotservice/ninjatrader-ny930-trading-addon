@@ -1743,6 +1743,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (p.TpGapGuardTicks  != null) TpGapGuardTicks  = Math.Max(0, p.TpGapGuardTicks.Value);
                 if (p.SlGapGuardTicks  != null) SlGapGuardTicks  = Math.Max(0, p.SlGapGuardTicks.Value);
 
+                // Salida por Tiempo wiring — without these reads the
+                // dropdown / duration / "Cerrar si superó TP" toggle
+                // were dead UI (strategy used State.SetDefaults values).
+                if (p.TimeExitDurationSeconds != null) MinDurationSeconds = Math.Max(1, p.TimeExitDurationSeconds.Value);
+                if (p.CloseIfBeyondTP         != null) CloseIfBeyondTP    = p.CloseIfBeyondTP.Value;
+                if (!string.IsNullOrEmpty(p.TimeExitMode))
+                {
+                    if      (p.TimeExitMode.Equals("CloseAlways",      StringComparison.OrdinalIgnoreCase)) ExitMode = TimeExitMode.CloseAlways;
+                    else if (p.TimeExitMode.Equals("CloseIfPositive",  StringComparison.OrdinalIgnoreCase)) ExitMode = TimeExitMode.CloseIfPositive;
+                    else if (p.TimeExitMode.Equals("PlaceTPAfterTime", StringComparison.OrdinalIgnoreCase)) ExitMode = TimeExitMode.PlaceTPAfterTime;
+                }
+
                 NY930Log.Info(SRC, "Parametros aplicados desde UI.");
                 if (!ordersPlaced) ProgramarTimer();
             }
@@ -1792,6 +1804,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     EnableSlGapGuard   = EnableSlGapGuard,
                     TpGapGuardTicks    = TpGapGuardTicks,
                     SlGapGuardTicks    = SlGapGuardTicks,
+                    TimeExitDurationSeconds = MinDurationSeconds,
+                    TimeExitMode            = ExitMode.ToString(),
+                    CloseIfBeyondTP         = CloseIfBeyondTP,
                     Direction          = Direccion.ToString(),
                     Quantity           = Quantity,
                     ContractsRemaining = contratosRestantes,

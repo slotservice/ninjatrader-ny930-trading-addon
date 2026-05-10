@@ -6,8 +6,11 @@
 //
 //   - Pure black background (#0a0a0a) with subtle candlestick
 //     pattern + radial gold glow at the top.
-//   - Hamburger icon in the top-right (3 horizontal lines).
 //   - NY (silver gradient) + 930 (gold gradient) wordmark.
+//     (The HTML mock-up had a decorative hamburger inside the
+//      home page; we removed it — the shell already provides a
+//      working hamburger menu so a second non-clickable copy
+//      was confusing rather than helpful.)
 //   - "Make Money Easy" tagline between two gold gradient lines.
 //   - Two cards (Open Range, Buy or Sell):
 //       * Gradient gold border
@@ -103,7 +106,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             };
             scroll.Content = page;
 
-            page.Children.Add(BuildNav());
             page.Children.Add(BuildLogo());
             page.Children.Add(BuildTagline());
             page.Children.Add(BuildCards());
@@ -116,37 +118,13 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             NY930Localization.LanguageChanged += OnLanguageChanged;
         }
 
-        // ── Nav (hamburger placeholder, decorative) ─────────────
-        private FrameworkElement BuildNav()
-        {
-            var nav = new StackPanel
-            {
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin              = new Thickness(0, 18, 0, 0)
-            };
-            // The shell already has a working hamburger menu, this
-            // one is purely visual to mirror the HTML layout.
-            for (int i = 0; i < 3; i++)
-            {
-                nav.Children.Add(new Border
-                {
-                    Width        = 22,
-                    Height       = 2,
-                    Background   = Brushes.White,
-                    CornerRadius = new CornerRadius(1),
-                    Margin       = new Thickness(0, 2, 0, 2)
-                });
-            }
-            return nav;
-        }
-
         // ── Logo: NY (silver gradient) + 930 (gold gradient) ────
         private FrameworkElement BuildLogo()
         {
             var wrap = new StackPanel
             {
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Margin              = new Thickness(0, 14, 0, 0)
+                Margin              = new Thickness(0, 36, 0, 0)
             };
 
             var logo = new TextBlock

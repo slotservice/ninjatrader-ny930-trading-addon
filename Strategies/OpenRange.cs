@@ -2093,6 +2093,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (p.EnableSingleStopReverseProtection != null) EnableSingleStopReverseProtection = p.EnableSingleStopReverseProtection.Value;
                 if (p.SingleStopReverseTicks            != null) SingleStopReverseTicks            = Math.Max(0, p.SingleStopReverseTicks.Value);
 
+                // Salida por Tiempo wiring — without these reads the
+                // dropdown / duration / "Cerrar si superó TP" toggle
+                // were dead UI (strategy used State.SetDefaults values).
+                if (p.TimeExitDurationSeconds != null) MinDurationSeconds = Math.Max(1, p.TimeExitDurationSeconds.Value);
+                if (p.CloseIfBeyondTP         != null) CloseIfBeyondTP    = p.CloseIfBeyondTP.Value;
+                if (!string.IsNullOrEmpty(p.TimeExitMode))
+                {
+                    if      (p.TimeExitMode.Equals("CloseAlways",      StringComparison.OrdinalIgnoreCase)) ExitMode = TimeExitMode.CloseAlways;
+                    else if (p.TimeExitMode.Equals("CloseIfPositive",  StringComparison.OrdinalIgnoreCase)) ExitMode = TimeExitMode.CloseIfPositive;
+                    else if (p.TimeExitMode.Equals("PlaceTPAfterTime", StringComparison.OrdinalIgnoreCase)) ExitMode = TimeExitMode.PlaceTPAfterTime;
+                }
+
                 NY930Log.Info(SRC, "Parametros aplicados desde UI.");
                 if (!ordersPlaced)
                 {
@@ -2255,6 +2267,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     SlGapGuardTicks     = SlGapGuardTicks,
                     EnableSingleStopReverseProtection = EnableSingleStopReverseProtection,
                     SingleStopReverseTicks            = SingleStopReverseTicks,
+                    TimeExitDurationSeconds = MinDurationSeconds,
+                    TimeExitMode            = ExitMode.ToString(),
+                    CloseIfBeyondTP         = CloseIfBeyondTP,
                     EnableLong          = EnableLong,
                     EnableShort         = EnableShort,
 

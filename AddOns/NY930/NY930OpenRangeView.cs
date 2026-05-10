@@ -89,6 +89,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private StackPanel _ggTpFields, _ggTrFields;
         private TextBox _tpGgTicks, _tpGgSecs;
         private TextBox _trDist, _trTimeout;
+        // Tracks 4.2 mode explicitly so we don't have to inspect
+        // the TabButton's Background brush to know which sub-mode
+        // is active. true = TP Guard, false = Trailing TP.
+        private bool _ggTpMode = true;
         // Salida por Tiempo
         private TextBox _stDuration;
         private ComboBox _stMode;
@@ -265,15 +269,15 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             var hourGroup = new StackPanel { Orientation = Orientation.Horizontal,
                                               HorizontalAlignment = HorizontalAlignment.Center,
                                               VerticalAlignment   = VerticalAlignment.Center };
-            // Width bumped from 27 → 36 (v1.3.1 fix). 27px in CSS
-            // includes padding via box-sizing:border-box; WPF's
-            // Width does NOT include padding, so 27px ended up
-            // clipping the digit. 36px matches the visual width
-            // of the HTML mockup.
-            _hh   = NY930Theme.FInput("9",  36);
-            _hm   = NY930Theme.FInput("29", 36);
-            _hs   = NY930Theme.FInput("58", 36);
-            _ampm = NY930Theme.FSelect(46);
+            // Inputs sized so the whole row (label + hh:mm:ss + AM/PM
+            // + ACTIVAR) fits inside the 250px panel without clipping.
+            // Earlier 36px values pushed the row past the right edge,
+            // hiding the hour digit.
+            _hh   = NY930Theme.FInput("9",  30);
+            _hm   = NY930Theme.FInput("29", 30);
+            _hs   = NY930Theme.FInput("58", 30);
+            _ampm = NY930Theme.FSelect(40);
+            _ampm.Margin = new Thickness(4, 0, 0, 0);
             _ampm.Items.Add("AM");
             _ampm.Items.Add("PM");
             _ampm.SelectedIndex = 0;
@@ -287,6 +291,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             row.Children.Add(hourGroup);
 
             _btnActivar = NY930Theme.ActionButton("ACTIVAR");
+            _btnActivar.Padding = new Thickness(6, 3, 6, 3); // compact
             _btnActivar.Click += (s, e) => ActivarHorario();
             Grid.SetColumn(_btnActivar, 2);
             row.Children.Add(_btnActivar);
@@ -453,6 +458,13 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
         // SSR appears only when exactly one side (Long XOR Short)
         // is enabled. Mounts into that side's accordion body.
+        //
+        // _ssrToggle / _ssrTicks are class-level fields so the user's
+        // configured state survives re-parenting. Before re-adding
+        // them we explicitly detach from any previous parent to avoid
+        // WPF's "Specified element is already the logical child of
+        // another element" exception (would crash the panel when the
+        // user toggled the active side back and forth).
         private void UpdateSsrSlots()
         {
             if (_ssrLongSlot == null || _ssrShortSlot == null) return;
@@ -460,7 +472,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             bool longOn  = _accLong.IsOn;
             bool shortOn = _accShort.IsOn;
 
-            // Detach from both
+            DetachFromParent(_ssrToggle);
+            DetachFromParent(_ssrTicks);
             _ssrLongSlot.Children.Clear();
             _ssrShortSlot.Children.Clear();
 
@@ -517,6 +530,21 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 });
                 slot.Children.Add(ticksRow);
             }
+        }
+
+        // Pull a UIElement out of its current Panel/Decorator parent
+        // so it can be re-added elsewhere without WPF complaining.
+        private static void DetachFromParent(UIElement el)
+        {
+            if (el == null) return;
+            var parent = System.Windows.Media.VisualTreeHelper.GetParent(el)
+                       ?? System.Windows.LogicalTreeHelper.GetParent(el);
+            var panel = parent as Panel;
+            if (panel != null) { panel.Children.Remove(el); return; }
+            var decorator = parent as Decorator;
+            if (decorator != null) { decorator.Child = null; return; }
+            var border = parent as Border;
+            if (border != null) { border.Child = null; }
         }
 
         private StackPanel BuildAvanzada()
@@ -621,6 +649,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
         private void SetGgMode(bool tpMode)
         {
+            _ggTpMode = tpMode;
             _ggTpBtn.SetActive(tpMode);
             _ggTrBtn.SetActive(!tpMode);
             _ggTpFields.Visibility = tpMode ? Visibility.Visible : Visibility.Collapsed;
@@ -770,11 +799,14 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 EnableTrailing   = _accTs.IsOn,
                 EnablePartials   = _accPar.IsOn,
                 EnableTimeExit   = _accSt.IsOn,
-                EnableTpGapGuard = _accGg.IsOn && _ggTpBtn.Background == NY930Theme.Bg2Brush,
+                EnableTpGapGuard = _accGg.IsOn &&  _ggTpMode,
                 EnableSlGapGuard = _accGg.IsOn,
                 TpGapGuardTicks  = ParseInt(_tpGgTicks.Text),
                 SlGapGuardTicks  = ParseInt(_slGgTicks.Text),
-                EnableTrailingTP = _accGg.IsOn && _ggTrBtn.Background == NY930Theme.Bg2Brush,
+                EnableTrailingTP = _accGg.IsOn && !_ggTpMode,
+                TimeExitDurationSeconds = ParseInt(_stDuration.Text),
+                TimeExitMode            = StModeKey(),
+                CloseIfBeyondTP         = _stBeyondTpTog != null && _stBeyondTpTog.IsOn,
 
                 EnableSingleStopReverseProtection = _ssrToggle != null && _ssrToggle.IsOn,
                 SingleStopReverseTicks = _ssrTicks != null ? ParseInt(_ssrTicks.Text) : null
@@ -808,7 +840,40 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
             if (_accLong != null)  _accLong.Set(s.EnableLong);
             if (_accShort != null) _accShort.Set(s.EnableShort);
+
+            // SSR is created at construction time so we can restore
+            // its state on every snapshot. No empty-check — the user
+            // never types into a toggle, so the strategy is the
+            // source of truth.
+            if (_ssrToggle != null) _ssrToggle.Set(s.EnableSingleStopReverseProtection);
+            if (_ssrTicks  != null && s.SingleStopReverseTicks > 0
+                && string.IsNullOrEmpty(_ssrTicks.Text))
+                _ssrTicks.Text = s.SingleStopReverseTicks.ToString();
+
             UpdateSsrSlots();
+
+            // Avanzada accordion + Gap Guard 4.2 mode restoration so
+            // the user sees the strategy's actual config on reload
+            // instead of the WPF default.
+            if (_accGg != null) _accGg.Set(s.EnableTpGapGuard || s.EnableSlGapGuard || s.EnableTrailingTP);
+            if (_ggTpBtn != null && _ggTrBtn != null)
+            {
+                if      (s.EnableTrailingTP) SetGgMode(false);
+                else if (s.EnableTpGapGuard) SetGgMode(true);
+            }
+            if (s.TpGapGuardTicks > 0 && _tpGgTicks != null && string.IsNullOrEmpty(_tpGgTicks.Text))
+                _tpGgTicks.Text = s.TpGapGuardTicks.ToString();
+            if (s.SlGapGuardTicks > 0 && _slGgTicks != null && string.IsNullOrEmpty(_slGgTicks.Text))
+                _slGgTicks.Text = s.SlGapGuardTicks.ToString();
+
+            // Salida por Tiempo restoration so the dropdown / duration
+            // / "Cerrar si superó TP" toggle reflect strategy state.
+            if (_accSt != null) _accSt.Set(s.EnableTimeExit);
+            if (_stDuration != null && s.TimeExitDurationSeconds > 0
+                && string.IsNullOrEmpty(_stDuration.Text))
+                _stDuration.Text = s.TimeExitDurationSeconds.ToString();
+            RestoreStModeFromKey(s.TimeExitMode);
+            if (_stBeyondTpTog != null) _stBeyondTpTog.Set(s.CloseIfBeyondTP);
 
             // Auto-route to control view once stops are placed
             // and still working (no fill yet).
@@ -832,6 +897,29 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out v))
                 return v;
             return null;
+        }
+
+        // The dropdown labels are user-friendly Spanish, but the
+        // strategy enum values are English. Map index → enum name
+        // so the strategy reads what the user picked.
+        private string StModeKey()
+        {
+            if (_stMode == null) return null;
+            switch (_stMode.SelectedIndex)
+            {
+                case 0:  return "CloseAlways";
+                case 1:  return "CloseIfPositive";
+                case 2:  return "PlaceTPAfterTime";
+                default: return null;
+            }
+        }
+
+        private void RestoreStModeFromKey(string key)
+        {
+            if (_stMode == null || string.IsNullOrEmpty(key)) return;
+            if      (key.Equals("CloseAlways",      StringComparison.OrdinalIgnoreCase)) _stMode.SelectedIndex = 0;
+            else if (key.Equals("CloseIfPositive",  StringComparison.OrdinalIgnoreCase)) _stMode.SelectedIndex = 1;
+            else if (key.Equals("PlaceTPAfterTime", StringComparison.OrdinalIgnoreCase)) _stMode.SelectedIndex = 2;
         }
 
         public void RefreshLocalization() { /* schedule labels are Spanish per mockup */ }
