@@ -202,6 +202,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public int?    TakeProfitShortTicks;
         // Hedge only
         public string  Direction;          // "Long" / "Short" / "None" (null = unchanged)
+        public string  EntryMode;          // "Time" / "Price" / "Manual" (null = unchanged)
+        public double? EntryPrice;         // monitored trigger price for "Price" mode
         // Common toggles
         public bool?   EnableBreakeven;
         public bool?   EnableTrailing;

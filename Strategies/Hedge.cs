@@ -59,6 +59,15 @@ namespace NinjaTrader.NinjaScript.Strategies
     // ── Modos de salida por tiempo ────────────────────────────────
     public enum TimeExitMode { CloseAlways, CloseIfPositive, PlaceTPAfterTime }
 
+    // ── Modo de entrada (NY930 v1.3) ──────────────────────────────
+    // Time   = horario fijo (timer + ProgramarTimer) — comportamiento
+    //          original, sin cambios.
+    // Price  = precio objetivo: cuando lastPrice cruza EntryPrice en
+    //          la dirección configurada, se dispara la entrada.
+    // Manual = la UI dispara HedgeBuyNow / HedgeSellNow directamente,
+    //          el strategy no hace nada por sí solo.
+    public enum EntryModeNY930 { Time, Price, Manual }
+
     public class Apertura : Strategy
     {
         // Source tag for the structured logger
@@ -146,6 +155,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         // ── NY930 Last finished trade ─────────────────────────────
         private NY930TradeResult _lastResult;
 
+        // ── NY930 v1.3: price-triggered entry state ──────────────
+        // EntryMode is the user's chosen entry method. Only Price
+        // mode adds new behaviour; Time and Manual are unchanged.
+        private bool   _priceEntryArmed;
+        private double _priceEntryAnchor;   // anchor price recorded
+                                            // when Price mode armed
+
         // ── Estado persistente (static) ───────────────────────────
         private static bool   _saveOrdersPlaced  = false;
         private static bool   _saveExitPlaced    = false;
@@ -182,6 +198,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 StopLossTicks   = 90;
                 TakeProfitTicks = 61;
                 Direccion       = DireccionEntrada.SinOperacion;
+                EntryMode       = EntryModeNY930.Time;
+                EntryPrice      = 0;
 
                 EnableBreakeven       = false;
                 BreakevenTriggerTicks = 30;
@@ -538,6 +556,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             DescartarTimer();
 
+            // Only the original Time mode arms the timer. Price and
+            // Manual modes never time-trigger.
+            if (EntryMode != EntryModeNY930.Time) return;
+
             DateTime now       = DateTime.Now;
             DateTime entryTime = EntradaProgramada();
 
@@ -675,6 +697,30 @@ namespace NinjaTrader.NinjaScript.Strategies
                         NY930Log.Info(SRC, "Reintento ReducirSL via polling: "
                               + slOrder.Quantity + " → " + slTargetQty + " contratos.");
                     }
+                }
+            }
+
+            // ── 3.5 NY930 v1.3 Price-triggered entry ─────────────
+            // Only acts when EntryMode is Price AND we are armed
+            // AND no entry order has been placed yet for the day.
+            // When the price crosses EntryPrice in the configured
+            // direction, fire the same market entry the timer would.
+            if (_priceEntryArmed && EntryMode == EntryModeNY930.Price
+                && !ordersPlaced && !sessionDone && lastPrice > 0
+                && EntryPrice > 0)
+            {
+                bool esLong = (Direccion == DireccionEntrada.Long);
+                bool crossed = esLong
+                    ? (_priceEntryAnchor < EntryPrice && lastPrice >= EntryPrice)
+                      || (_priceEntryAnchor > EntryPrice && lastPrice >= EntryPrice)
+                    : (_priceEntryAnchor > EntryPrice && lastPrice <= EntryPrice)
+                      || (_priceEntryAnchor < EntryPrice && lastPrice <= EntryPrice);
+                if (crossed)
+                {
+                    NY930Log.Info(SRC, "Price-trigger: " + lastPrice
+                        + " cruzo objetivo " + EntryPrice + ". Disparando entrada.");
+                    _priceEntryArmed = false;
+                    ColocarEntradaMercado();
                 }
             }
 
@@ -1659,6 +1705,33 @@ namespace NinjaTrader.NinjaScript.Strategies
                     else                                                                       Direccion = DireccionEntrada.SinOperacion;
                 }
 
+                if (!inTrade && !string.IsNullOrEmpty(p.EntryMode))
+                {
+                    if (p.EntryMode.Equals("Price",  StringComparison.OrdinalIgnoreCase)) EntryMode = EntryModeNY930.Price;
+                    else if (p.EntryMode.Equals("Manual", StringComparison.OrdinalIgnoreCase)) EntryMode = EntryModeNY930.Manual;
+                    else                                                                       EntryMode = EntryModeNY930.Time;
+                }
+                if (!inTrade && p.EntryPrice != null) EntryPrice = Math.Max(0, p.EntryPrice.Value);
+
+                // Arm price-trigger monitor when entering Price mode
+                // with a positive EntryPrice. The anchor records the
+                // current price so we know which side of EntryPrice
+                // we started on.
+                if (!inTrade && EntryMode == EntryModeNY930.Price
+                    && EntryPrice > 0 && lastPrice > 0
+                    && Direccion != DireccionEntrada.SinOperacion)
+                {
+                    _priceEntryAnchor = lastPrice;
+                    _priceEntryArmed  = true;
+                    NY930Log.Info(SRC, "Price-trigger armed @anchor=" + lastPrice
+                        + " target=" + EntryPrice + " dir=" + Direccion);
+                }
+                else
+                {
+                    _priceEntryArmed = EntryMode == EntryModeNY930.Price && EntryPrice > 0
+                                       && Direccion != DireccionEntrada.SinOperacion;
+                }
+
                 if (p.EnableBreakeven  != null) EnableBreakeven  = p.EnableBreakeven.Value;
                 if (p.EnableTrailing   != null) EnableTrailing   = p.EnableTrailing.Value;
                 if (p.EnableTrailingTP != null) EnableTrailingTP = p.EnableTrailingTP.Value;
@@ -1785,6 +1858,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "Tipo de Operacion", GroupName = "3. Operacion", Order = 0)]
         public DireccionEntrada Direccion { get; set; }
+
+        // NY930 v1.3 — entry mode. Time = original timer-driven
+        // entry. Price = monitor lastPrice and fire when EntryPrice
+        // is crossed. Manual = strategy takes no automatic action;
+        // the UI fires HedgeBuyNow / HedgeSellNow on demand.
+        [NinjaScriptProperty]
+        [Display(Name = "Modo de entrada", GroupName = "3. Operacion", Order = 1)]
+        public EntryModeNY930 EntryMode { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Precio objetivo (modo Price)", GroupName = "3. Operacion", Order = 2)]
+        public double EntryPrice { get; set; }
 
         // ── Grupo 4: Breakeven ───────────────────────────────────
 

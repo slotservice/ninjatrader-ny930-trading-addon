@@ -1,9 +1,15 @@
 // ============================================================
-//  NY930HedgeView — v1.2 pixel-match against client mockup
+//  NY930HedgeView — v1.3 pixel-match
+//  Reference: ny930-buy_or_sell-panel.html
 // ------------------------------------------------------------
-//  Same visual language as the Open Range view but tailored
-//  for the Hedge strategy (single-direction direct entry).
-//  No range/spread cards. Direction badge in the header tag.
+//  Same shape as the Open Range setup view, plus:
+//    - BUY / or / SELL row at top to pick the side.
+//    - Three top tabs instead of two: Horario | Precio | Manual.
+//      * Precio tab is new (price-triggered entry).
+//    - Estándar config has just SL/TP/Contratos (no Long/Short
+//      accordions).
+//    - No Single-Stop Reverse.
+//    - Same Avanzada accordions.
 // ============================================================
 
 #region Using declarations
@@ -11,6 +17,7 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 #endregion
 
@@ -20,443 +27,835 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
     {
         private readonly NY930ShellView _shell;
 
-        private NY930Theme.TradeHeader _header;
+        // Header status dot/label
+        private System.Windows.Shapes.Ellipse _statusDot;
+        private TextBlock _statusLabelTb;
 
-        private TextBlock _instrumentText;
-        private TextBlock _countdownLabel;
+        // BUY/SELL selector
+        private Button _btnBuy, _btnSell;
+        private string _selectedSide = "none"; // "buy" | "sell" | "none"
 
-        private NY930Theme.BigPnLDisplay _bigPnL;
-        private Border _pillCurrency;
-        private Border _pillDuration;
-        private Border _pillContracts;
-        private TextBlock _pillCurrencyText;
-        private TextBlock _pillDurationText;
-        private TextBlock _pillContractsText;
+        // Tabs
+        private NY930Theme.TabButton _tabHorario, _tabPrecio, _tabManual;
+        private StackPanel _panelHorario, _panelPrecio, _panelManual;
 
-        private NY930Theme.NavyTpRow _tp1Row;
-        private NY930Theme.NavyTpRow _tp2Row;
-        private NY930Theme.NavyTpRow _tpRow;
-        private NY930Theme.NavyTpRow _slRow;
+        // Sub-tabs
+        private NY930Theme.TabButton _stabEst, _stabAvz;
+        private StackPanel _panelEst, _panelAvz;
 
-        private Button _btnBreakeven;
-        private Button _btnCloseNow;
-        private Button _btnPartial;
-        private Button _btnTrailing;
-        private NY930Theme.PartialPercentSelector _partialPct;
+        // Schedule
+        private TextBox _hh, _hm, _hs;
+        private ComboBox _ampm;
+        private Button   _btnActivarH;
+        private StackPanel _scheduleForm, _scheduleCountdown;
+        private TextBlock _countdownTb;
+        private Button   _btnStopH;
 
-        private Button _btnBuyNow;
-        private Button _btnSellNow;
-        private Button _btnCancelEntry;
-        private Button _btnEditParams;
+        // Precio
+        private TextBox _priceInput;
+        private Button  _btnActivarP;
+        private StackPanel _precioForm, _precioActive;
+        private TextBlock _precioActiveTb;
+        private Button   _btnStopP;
 
-        private TextBlock _hdrActions;
-        private TextBlock _hdrManagement;
+        // Manual
+        private Button _btnManualActivate;
 
+        // Estándar
+        private TextBox _cfgQty, _cfgSl, _cfgTp;
+
+        // Avanzada (same set as Open Range)
+        private NY930Theme.Accordion _accBe, _accTs, _accPar, _accGg, _accSt;
+        private TextBox _beTrigger, _beOffset;
+        private TextBox _tsTrigger, _tsStep;
+        private TextBox _p1Ticks, _p1Qty, _p2Ticks, _p2Qty;
+        private TextBox _slGgTicks, _slGgSecs;
+        private NY930Theme.TabButton _ggTpBtn, _ggTrBtn;
+        private StackPanel _ggTpFields, _ggTrFields;
+        private TextBox _tpGgTicks, _tpGgSecs;
+        private TextBox _trDist, _trTimeout;
+        private TextBox _stDuration;
+        private ComboBox _stMode;
+        private NY930Theme.ToggleSwitch _stBeyondTpTog;
+
+        // Apply / change
+        private Button _btnApply, _btnChangeStrat;
+
+        // Countdown
         private System.Windows.Threading.DispatcherTimer _ticker;
-        private DateTime _entryTime;
+        private DateTime _scheduledEntry;
+        private bool     _scheduleArmed;
 
         public NY930HedgeView(NY930ShellView shell)
         {
             _shell = shell;
-            Background = NY930Theme.BgNavyBrush;
+            Background = NY930Theme.BgBrush;
 
             var scroll = new ScrollViewer
             {
                 VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Background = Brushes.Transparent
             };
             Children.Add(scroll);
 
-            var root = new StackPanel();
+            var root = new StackPanel { MaxWidth = NY930Theme.PanelWidth };
             scroll.Content = root;
 
-            _header = new NY930Theme.TradeHeader("APERTURA");
-            root.Children.Add(_header);
+            root.Children.Add(BuildHeader());
+            root.Children.Add(BuildBuySellRow());
+            root.Children.Add(BuildAccountRow());
+            root.Children.Add(BuildTabs());
+            root.Children.Add(BuildTabPanels());
+            root.Children.Add(NY930Theme.Divider());
+            root.Children.Add(new TextBlock
+            {
+                Text = "CONFIGURACIÓN", FontSize = 9, FontWeight = FontWeights.Bold,
+                Foreground = NY930Theme.Text3Brush, Margin = new Thickness(9, 6, 9, 0)
+            });
+            root.Children.Add(BuildSubTabs());
+            root.Children.Add(BuildSubPanels());
+            root.Children.Add(BuildApplyArea());
 
-            BuildHero(root);
-            BuildTargets(root);
-            BuildActions(root);
-            BuildManagement(root);
-            BuildEntry(root);
-
+            // Bridge
             NY930Bridge.HedgeChanged += OnSnapshot;
             var current = NY930Bridge.GetHedge();
-            if (current != null) OnSnapshot(current);
-            else                 RenderEmpty();
+            if (current != null) ApplySnapshotToInputs(current);
 
-            _ticker = new System.Windows.Threading.DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(1)
-            };
+            _ticker = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _ticker.Tick += (s, e) => RefreshCountdown();
             _ticker.Start();
         }
 
-        private void BuildHero(StackPanel root)
+        // ── Header with status dot/label ───────────────────────
+        private FrameworkElement BuildHeader()
         {
-            var stack = new StackPanel { Margin = new Thickness(12, 0, 12, 0) };
-
-            var subRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
-            subRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            subRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            _instrumentText = new TextBlock
+            var h = new NY930Theme.PanelHeader();
+            var rightStack = new StackPanel
             {
-                Text       = "—",
-                FontSize   = 11,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = NY930Theme.TextNavyMidBrush
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
             };
-            Grid.SetColumn(_instrumentText, 0);
-            subRow.Children.Add(_instrumentText);
-
-            _countdownLabel = new TextBlock
+            _statusDot = new System.Windows.Shapes.Ellipse
             {
-                Text       = "",
-                FontSize   = 11,
-                FontWeight = FontWeights.Bold,
-                FontFamily = new FontFamily("Consolas"),
-                Foreground = NY930Theme.CyanAccentHiBrush
+                Width = 6, Height = 6,
+                Fill = NY930Theme.Text3Brush,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center
             };
-            Grid.SetColumn(_countdownLabel, 1);
-            subRow.Children.Add(_countdownLabel);
-            stack.Children.Add(subRow);
-
-            var inner = new StackPanel();
-            _bigPnL = new NY930Theme.BigPnLDisplay();
-            inner.Children.Add(_bigPnL);
-
-            var pills = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-            _pillCurrency  = NY930Theme.Pill("$0.00",  NY930Theme.CyanAccent);
-            _pillDuration  = NY930Theme.Pill("00:00",  NY930Theme.TextNavyMid);
-            _pillContracts = NY930Theme.Pill("0 ctos", NY930Theme.TextNavyMid);
-            _pillCurrencyText  = (TextBlock)_pillCurrency.Child;
-            _pillDurationText  = (TextBlock)_pillDuration.Child;
-            _pillContractsText = (TextBlock)_pillContracts.Child;
-            pills.Children.Add(_pillCurrency);
-            pills.Children.Add(_pillDuration);
-            pills.Children.Add(_pillContracts);
-            inner.Children.Add(pills);
-
-            stack.Children.Add(NY930Theme.NavyPanel(inner, new Thickness(0, 0, 0, 8)));
-            root.Children.Add(stack);
+            _statusLabelTb = new TextBlock
+            {
+                Text = "—",
+                FontFamily = NY930Theme.MonoFont,
+                FontSize = 10, FontWeight = FontWeights.SemiBold,
+                Foreground = NY930Theme.Text2Brush,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            rightStack.Children.Add(_statusDot);
+            rightStack.Children.Add(_statusLabelTb);
+            h.Right.Children.Add(rightStack);
+            return h;
         }
 
-        private void BuildTargets(StackPanel root)
+        // ── BUY / or / SELL row ────────────────────────────────
+        private FrameworkElement BuildBuySellRow()
         {
-            var stack = new StackPanel();
-            _tp1Row = new NY930Theme.NavyTpRow();
-            _tp2Row = new NY930Theme.NavyTpRow();
-            _tpRow  = new NY930Theme.NavyTpRow();
-            _slRow  = new NY930Theme.NavyTpRow(isStop: true);
-            stack.Children.Add(_tp1Row);
-            stack.Children.Add(_tp2Row);
-            stack.Children.Add(_tpRow);
-            stack.Children.Add(_slRow);
-            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(12, 0, 12, 8)));
+            var grid = new Grid { Margin = new Thickness(9, 9, 9, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+
+            _btnBuy  = MakeBsBtn("BUY",  true);
+            _btnSell = MakeBsBtn("SELL", false);
+            _btnBuy.Click  += (s, e) => SelectSide("buy");
+            _btnSell.Click += (s, e) => SelectSide("sell");
+
+            var sep = new Border
+            {
+                Background      = NY930Theme.Bg3Brush,
+                BorderBrush     = NY930Theme.Border2Brush,
+                BorderThickness = new Thickness(0, 1, 0, 1),
+                Child = new TextBlock
+                {
+                    Text       = "or",
+                    FontFamily = NY930Theme.SansFont,
+                    FontSize   = 9,
+                    FontStyle  = FontStyles.Italic,
+                    Foreground = NY930Theme.Text3Brush,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment   = VerticalAlignment.Center
+                }
+            };
+
+            Grid.SetColumn(_btnBuy, 0);
+            Grid.SetColumn(sep, 1);
+            Grid.SetColumn(_btnSell, 2);
+            grid.Children.Add(_btnBuy);
+            grid.Children.Add(sep);
+            grid.Children.Add(_btnSell);
+            return grid;
         }
 
-        private void BuildActions(StackPanel root)
+        private Button MakeBsBtn(string text, bool leftRound)
+        {
+            return new Button
+            {
+                Content = text,
+                Background = NY930Theme.Bg3Brush,
+                BorderBrush = NY930Theme.Border2Brush,
+                BorderThickness = new Thickness(1),
+                Foreground = NY930Theme.Text2Brush,
+                FontFamily = NY930Theme.MonoFont,
+                FontSize = 9, FontWeight = FontWeights.Bold,
+                Padding = new Thickness(0, 7, 0, 7),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+        }
+
+        private void SelectSide(string side)
+        {
+            _selectedSide = side;
+            ApplySideStyle();
+        }
+
+        private void ApplySideStyle()
+        {
+            if (_selectedSide == "buy")
+            {
+                _btnBuy.Background  = NY930Theme.BrushAlpha(NY930Theme.Green, 0x1F);
+                _btnBuy.BorderBrush = NY930Theme.GreenBrush;
+                _btnBuy.Foreground  = NY930Theme.GreenBrush;
+                _btnSell.Background  = NY930Theme.Bg3Brush;
+                _btnSell.BorderBrush = NY930Theme.Border2Brush;
+                _btnSell.Foreground  = NY930Theme.Text2Brush;
+                _statusDot.Fill = NY930Theme.GreenBrush;
+                _statusLabelTb.Text = "BUY";
+                _statusLabelTb.Foreground = NY930Theme.GreenBrush;
+            }
+            else if (_selectedSide == "sell")
+            {
+                _btnSell.Background  = NY930Theme.BrushAlpha(NY930Theme.Red, 0x1F);
+                _btnSell.BorderBrush = NY930Theme.RedBrush;
+                _btnSell.Foreground  = NY930Theme.RedBrush;
+                _btnBuy.Background  = NY930Theme.Bg3Brush;
+                _btnBuy.BorderBrush = NY930Theme.Border2Brush;
+                _btnBuy.Foreground  = NY930Theme.Text2Brush;
+                _statusDot.Fill = NY930Theme.RedBrush;
+                _statusLabelTb.Text = "SELL";
+                _statusLabelTb.Foreground = NY930Theme.RedBrush;
+            }
+            else
+            {
+                _btnBuy.Background  = NY930Theme.Bg3Brush;
+                _btnBuy.BorderBrush = NY930Theme.Border2Brush;
+                _btnBuy.Foreground  = NY930Theme.Text2Brush;
+                _btnSell.Background  = NY930Theme.Bg3Brush;
+                _btnSell.BorderBrush = NY930Theme.Border2Brush;
+                _btnSell.Foreground  = NY930Theme.Text2Brush;
+                _statusDot.Fill = NY930Theme.Text3Brush;
+                _statusLabelTb.Text = "—";
+                _statusLabelTb.Foreground = NY930Theme.Text2Brush;
+            }
+        }
+
+        // ── Cuenta dropdown row ────────────────────────────────
+        private FrameworkElement BuildAccountRow()
+        {
+            var grid = new Grid { Margin = new Thickness(9, 6, 9, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var lbl = new TextBlock
+            {
+                Text = "CUENTA", FontSize = 9, FontWeight = FontWeights.Bold,
+                Foreground = NY930Theme.Text3Brush, VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(lbl, 0);
+
+            var combo = NY930Theme.FSelect(150);
+            combo.Margin = new Thickness(8, 0, 0, 0);
+            combo.Items.Add("Simulada");
+            combo.Items.Add("Live · Principal");
+            combo.Items.Add("Live · Secundaria");
+            combo.Items.Add("Paper Trading");
+            combo.SelectedIndex = 0;
+            Grid.SetColumn(combo, 1);
+
+            grid.Children.Add(lbl);
+            grid.Children.Add(combo);
+            return grid;
+        }
+
+        // ── 3-tab row: Horario | Precio | Manual ──────────────
+        private FrameworkElement BuildTabs()
+        {
+            var border = new Border
+            {
+                Margin = new Thickness(9, 9, 9, 0),
+                BorderBrush = NY930Theme.Border2Brush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4)
+            };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+
+            _tabHorario = new NY930Theme.TabButton("Horario", true);
+            _tabPrecio  = new NY930Theme.TabButton("Precio",  false);
+            _tabManual  = new NY930Theme.TabButton("Manual",  false);
+            _tabHorario.Click += (s, e) => SetActiveTab(0);
+            _tabPrecio.Click  += (s, e) => SetActiveTab(1);
+            _tabManual.Click  += (s, e) => SetActiveTab(2);
+
+            Grid.SetColumn(_tabHorario, 0);
+            Grid.SetColumn(_tabPrecio,  1);
+            Grid.SetColumn(_tabManual,  2);
+            grid.Children.Add(_tabHorario);
+            grid.Children.Add(_tabPrecio);
+            grid.Children.Add(_tabManual);
+            border.Child = grid;
+            return border;
+        }
+
+        private void SetActiveTab(int idx)
+        {
+            _tabHorario.SetActive(idx == 0);
+            _tabPrecio.SetActive(idx == 1);
+            _tabManual.SetActive(idx == 2);
+            _panelHorario.Visibility = idx == 0 ? Visibility.Visible : Visibility.Collapsed;
+            _panelPrecio.Visibility  = idx == 1 ? Visibility.Visible : Visibility.Collapsed;
+            _panelManual.Visibility  = idx == 2 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ── Tab panels ─────────────────────────────────────────
+        private FrameworkElement BuildTabPanels()
+        {
+            var wrap = new StackPanel { Margin = new Thickness(9, 9, 9, 0) };
+
+            // Horario
+            _panelHorario = new StackPanel();
+            _scheduleForm      = BuildScheduleForm();
+            _scheduleCountdown = BuildScheduleCountdown();
+            _scheduleCountdown.Visibility = Visibility.Collapsed;
+            _panelHorario.Children.Add(_scheduleForm);
+            _panelHorario.Children.Add(_scheduleCountdown);
+            wrap.Children.Add(_panelHorario);
+
+            // Precio
+            _panelPrecio = new StackPanel { Visibility = Visibility.Collapsed };
+            _precioForm   = BuildPrecioForm();
+            _precioActive = BuildPrecioActive();
+            _precioActive.Visibility = Visibility.Collapsed;
+            _panelPrecio.Children.Add(_precioForm);
+            _panelPrecio.Children.Add(_precioActive);
+            wrap.Children.Add(_panelPrecio);
+
+            // Manual
+            _panelManual = new StackPanel { Visibility = Visibility.Collapsed };
+            _btnManualActivate = NY930Theme.ActionButton("COMPRAR AHORA");
+            _btnManualActivate.HorizontalAlignment = HorizontalAlignment.Stretch;
+            _btnManualActivate.Padding = new Thickness(0, 6, 0, 6);
+            _btnManualActivate.Click += (s, e) => DoManualEntry();
+            _panelManual.Children.Add(_btnManualActivate);
+            wrap.Children.Add(_panelManual);
+
+            return wrap;
+        }
+
+        private StackPanel BuildScheduleForm()
         {
             var stack = new StackPanel();
-            _hdrActions = NY930Theme.NavySectionHeader(NY930Localization.T("trade.section.actions"));
-            stack.Children.Add(_hdrActions);
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new ColumnDefinition());
-            row.ColumnDefinitions.Add(new ColumnDefinition());
-            _btnBreakeven = NY930Theme.NavyButton(NY930Localization.T("trade.action.breakeven"), NY930Theme.BlueAccent, false);
-            _btnBreakeven.Margin = new Thickness(0, 0, 4, 0);
-            _btnBreakeven.Click += (s, e) => Send(NY930ActionType.HedgeBreakeven, 0);
-            Grid.SetColumn(_btnBreakeven, 0);
-            row.Children.Add(_btnBreakeven);
+            var lbl = NY930Theme.FieldLabel("Hora");
+            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
 
-            _btnCloseNow = NY930Theme.NavyButton(NY930Localization.T("trade.action.close_now"), NY930Theme.DangerRed, false);
-            _btnCloseNow.Margin = new Thickness(4, 0, 0, 0);
-            _btnCloseNow.Click += (s, e) => Send(NY930ActionType.HedgeFlatten, 0);
-            Grid.SetColumn(_btnCloseNow, 1);
-            row.Children.Add(_btnCloseNow);
+            var hourGroup = new StackPanel { Orientation = Orientation.Horizontal,
+                                              HorizontalAlignment = HorizontalAlignment.Center,
+                                              VerticalAlignment   = VerticalAlignment.Center };
+            _hh = NY930Theme.FInput("9",  27);
+            _hm = NY930Theme.FInput("29", 27);
+            _hs = NY930Theme.FInput("58", 27);
+            _ampm = NY930Theme.FSelect(40);
+            _ampm.Items.Add("AM");
+            _ampm.Items.Add("PM");
+            _ampm.SelectedIndex = 0;
+            hourGroup.Children.Add(_hh);
+            hourGroup.Children.Add(MakeColon());
+            hourGroup.Children.Add(_hm);
+            hourGroup.Children.Add(MakeColon());
+            hourGroup.Children.Add(_hs);
+            hourGroup.Children.Add(_ampm);
+            Grid.SetColumn(hourGroup, 1); row.Children.Add(hourGroup);
+
+            _btnActivarH = NY930Theme.ActionButton("ACTIVAR");
+            _btnActivarH.Click += (s, e) => ActivarHorario();
+            Grid.SetColumn(_btnActivarH, 2); row.Children.Add(_btnActivarH);
 
             stack.Children.Add(row);
-            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(12, 0, 12, 8)));
+            return stack;
         }
 
-        private void BuildManagement(StackPanel root)
+        private StackPanel BuildScheduleCountdown()
         {
             var stack = new StackPanel();
-            _hdrManagement = NY930Theme.NavySectionHeader(NY930Localization.T("trade.section.management"));
-            stack.Children.Add(_hdrManagement);
-
             var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            _btnPartial = NY930Theme.NavyButton(NY930Localization.T("trade.action.partial"), NY930Theme.BlueAccent, false);
-            _btnPartial.Margin = new Thickness(0, 0, 6, 0);
-            _btnPartial.Click += (s, e) => SendPartial();
-            Grid.SetColumn(_btnPartial, 0);
-
-            _partialPct = new NY930Theme.PartialPercentSelector
+            var inner = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            inner.Children.Add(new TextBlock
             {
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 0)
+                Text = "TIEMPO RESTANTE", FontSize = 9,
+                Foreground = NY930Theme.Text2Brush,
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+            _countdownTb = new TextBlock
+            {
+                Text = "00:00:00", FontFamily = NY930Theme.MonoFont,
+                FontSize = 14, FontWeight = FontWeights.Bold,
+                Foreground = NY930Theme.GoldLightBrush,
+                HorizontalAlignment = HorizontalAlignment.Center
             };
-            Grid.SetColumn(_partialPct, 1);
+            inner.Children.Add(_countdownTb);
+            Grid.SetColumn(inner, 0); row.Children.Add(inner);
 
-            _btnTrailing = NY930Theme.NavyButton(NY930Localization.T("trade.action.trailing"), NY930Theme.SuccessGreen, false);
-            _btnTrailing.Click += (s, e) => Send(NY930ActionType.HedgeTrailingTrigger, 0);
-            Grid.SetColumn(_btnTrailing, 2);
-
-            row.Children.Add(_btnPartial);
-            row.Children.Add(_partialPct);
-            row.Children.Add(_btnTrailing);
+            _btnStopH = NY930Theme.ActionButton("STOP", danger: true);
+            _btnStopH.Click += (s, e) => DesactivarHorario();
+            Grid.SetColumn(_btnStopH, 1); row.Children.Add(_btnStopH);
 
             stack.Children.Add(row);
-            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(12, 0, 12, 8)));
+            return stack;
         }
 
-        private void BuildEntry(StackPanel root)
+        private StackPanel BuildPrecioForm()
         {
             var stack = new StackPanel();
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new ColumnDefinition());
-            row.ColumnDefinitions.Add(new ColumnDefinition());
-            _btnBuyNow  = NY930Theme.NavyButton(NY930Localization.T("or.buy_now"),  NY930Theme.SuccessGreen, true);
-            _btnSellNow = NY930Theme.NavyButton(NY930Localization.T("or.sell_now"), NY930Theme.DangerRed,    true);
-            _btnBuyNow.Margin  = new Thickness(0, 0, 4, 0);
-            _btnSellNow.Margin = new Thickness(4, 0, 0, 0);
-            _btnBuyNow.Click  += (s, e) => Send(NY930ActionType.HedgeBuyNow,  0);
-            _btnSellNow.Click += (s, e) => Send(NY930ActionType.HedgeSellNow, 0);
-            Grid.SetColumn(_btnBuyNow,  0);
-            Grid.SetColumn(_btnSellNow, 1);
-            row.Children.Add(_btnBuyNow);
-            row.Children.Add(_btnSellNow);
+            var lbl = NY930Theme.FieldLabel("Precio");
+            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
+
+            _priceInput = NY930Theme.FInput("28000.00", 80);
+            _priceInput.HorizontalAlignment = HorizontalAlignment.Center;
+            Grid.SetColumn(_priceInput, 1); row.Children.Add(_priceInput);
+
+            _btnActivarP = NY930Theme.ActionButton("ACTIVAR");
+            _btnActivarP.Click += (s, e) => ActivarPrecio();
+            Grid.SetColumn(_btnActivarP, 2); row.Children.Add(_btnActivarP);
+
             stack.Children.Add(row);
+            return stack;
+        }
 
-            _btnCancelEntry = NY930Theme.NavyButton(NY930Localization.T("or.cancel"), NY930Theme.WarnAmberHi, false);
-            _btnCancelEntry.Margin = new Thickness(0, 6, 0, 0);
-            _btnCancelEntry.Click += (s, e) => Send(NY930ActionType.HedgeCancelEntry, 0);
-            stack.Children.Add(_btnCancelEntry);
+        private StackPanel BuildPrecioActive()
+        {
+            var stack = new StackPanel();
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            _btnEditParams = new Button
+            var lbl = NY930Theme.FieldLabel("Precio");
+            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
+
+            _precioActiveTb = new TextBlock
             {
-                Content    = NY930Localization.T("params.title"),
-                Background = Brushes.Transparent,
-                Foreground = NY930Theme.TextNavyMidBrush,
-                BorderBrush = NY930Theme.BorderNavyBrush,
-                BorderThickness = new Thickness(1),
-                Padding    = new Thickness(0, 8, 0, 8),
-                FontSize   = 11,
-                Margin     = new Thickness(0, 6, 0, 0),
-                Cursor     = System.Windows.Input.Cursors.Hand
+                Text = "—", FontFamily = NY930Theme.MonoFont,
+                FontSize = 14, FontWeight = FontWeights.Bold,
+                Foreground = NY930Theme.GoldLightBrush,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
             };
-            _btnEditParams.Click += (s, e) => _shell.Show(new NY930ParametersView(_shell, isOpenRange: false));
-            stack.Children.Add(_btnEditParams);
+            Grid.SetColumn(_precioActiveTb, 1); row.Children.Add(_precioActiveTb);
 
-            root.Children.Add(NY930Theme.NavyPanel(stack, new Thickness(12, 0, 12, 12)));
+            _btnStopP = NY930Theme.ActionButton("STOP", danger: true);
+            _btnStopP.Click += (s, e) => DesactivarPrecio();
+            Grid.SetColumn(_btnStopP, 2); row.Children.Add(_btnStopP);
+
+            stack.Children.Add(row);
+            return stack;
         }
 
-        // ── Bridge ──────────────────────────────────────────────
-
-        private void Send(NY930ActionType type, int arg)
+        private TextBlock MakeColon()
         {
-            NY930Bridge.RequestHedgeAction(new NY930Action { Type = type, IntArg = arg });
-        }
-
-        private void SendPartial()
-        {
-            var snap = NY930Bridge.GetHedge();
-            int total = snap != null ? Math.Max(1, snap.ContractsRemaining) : 1;
-            int qty = (int)Math.Round(total * (_partialPct.Percent / 100.0));
-            if (qty < 1)     qty = 1;
-            if (qty > total) qty = total;
-            Send(NY930ActionType.HedgePartialClose, qty);
-        }
-
-        private void OnSnapshot(NY930HedgeSnapshot snap)
-            => Dispatcher.InvokeAsync(() => Render(snap));
-
-        private void Render(NY930HedgeSnapshot snap)
-        {
-            if (snap == null) { RenderEmpty(); return; }
-
-            _entryTime = snap.EntryTime;
-            _instrumentText.Text = snap.Instrument ?? "—";
-
-            // Header status tag + direction
-            UpdateHeaderTag(snap);
-
-            // Hero PnL
-            _bigPnL.Update(snap.UnrealizedCurrency, snap.UnrealizedTicks, snap.Direction);
-
-            // Pills
-            _pillCurrencyText.Text = (snap.UnrealizedCurrency >= 0 ? "+" : "")
-                + snap.UnrealizedCurrency.ToString("C", CultureInfo.CurrentCulture);
-            _pillCurrency.Visibility = snap.InPosition ? Visibility.Visible : Visibility.Collapsed;
-            if (snap.TradeStartTime != DateTime.MinValue && snap.InPosition)
+            return new TextBlock
             {
-                var d = DateTime.Now - snap.TradeStartTime;
-                _pillDurationText.Text = ((int)d.TotalMinutes).ToString("D2") + ":" + d.Seconds.ToString("D2");
-                _pillDuration.Visibility = Visibility.Visible;
-            }
-            else _pillDuration.Visibility = Visibility.Collapsed;
-            _pillContractsText.Text = snap.ContractsRemaining + " ctos";
-            _pillContracts.Visibility = snap.InPosition ? Visibility.Visible : Visibility.Collapsed;
+                Text = ":", FontFamily = NY930Theme.MonoFont, FontSize = 12,
+                FontWeight = FontWeights.Bold, Foreground = NY930Theme.Text3Brush,
+                Margin = new Thickness(2, 0, 2, 0), VerticalAlignment = VerticalAlignment.Center
+            };
+        }
 
-            // TP / SL rows
-            UpdateTpRow(_tp1Row, "TP1", snap.P1Price, snap.Partial1Done, snap, snap.Partial1Ticks);
-            UpdateTpRow(_tp2Row, "TP2", snap.P2Price, snap.Partial2Done, snap, snap.Partial2Ticks);
-            UpdateTpRow(_tpRow,  "TP",  snap.TpPrice, false,             snap, snap.TakeProfitTicks);
-            UpdateSlRow(_slRow, snap);
-
-            // Buttons
-            bool canEnter = !snap.InPosition && !snap.SessionDone;
-            _btnBreakeven.IsEnabled  = snap.InPosition;
-            _btnCloseNow.IsEnabled   = snap.InPosition;
-            _btnPartial.IsEnabled    = snap.InPosition;
-            _btnTrailing.IsEnabled   = snap.InPosition;
-            _btnBuyNow.IsEnabled     = canEnter;
-            _btnSellNow.IsEnabled    = canEnter;
-            _btnCancelEntry.IsEnabled = !canEnter && !snap.InPosition;
-
-            // Auto-route to result on close
-            if (snap.LastResult != null && !snap.InPosition && snap.SessionDone
-                && _shell != null && _shell.CurrentViewIs<NY930HedgeView>())
+        // ── Sub-tabs Estándar | Avanzada ───────────────────────
+        private FrameworkElement BuildSubTabs()
+        {
+            var border = new Border
             {
-                _shell.Show(new NY930ResultView(_shell, snap.LastResult));
-            }
+                BorderBrush = NY930Theme.Border2Brush,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Margin = new Thickness(9, 4, 9, 0)
+            };
+            var stack = new StackPanel { Orientation = Orientation.Horizontal };
+            _stabEst = new NY930Theme.TabButton("Estándar", true)  { Padding = new Thickness(12, 5, 12, 5) };
+            _stabAvz = new NY930Theme.TabButton("Avanzada", false) { Padding = new Thickness(12, 5, 12, 5) };
+            _stabEst.Click += (s, e) => { _stabEst.SetActive(true); _stabAvz.SetActive(false); _panelEst.Visibility = Visibility.Visible; _panelAvz.Visibility = Visibility.Collapsed; };
+            _stabAvz.Click += (s, e) => { _stabEst.SetActive(false); _stabAvz.SetActive(true); _panelEst.Visibility = Visibility.Collapsed; _panelAvz.Visibility = Visibility.Visible; };
+            stack.Children.Add(_stabEst);
+            stack.Children.Add(_stabAvz);
+            border.Child = stack;
+            return border;
+        }
 
+        private FrameworkElement BuildSubPanels()
+        {
+            var wrap = new StackPanel { Margin = new Thickness(9, 9, 9, 0) };
+            _panelEst = BuildEstandar();
+            _panelAvz = BuildAvanzada();
+            _panelAvz.Visibility = Visibility.Collapsed;
+            wrap.Children.Add(_panelEst);
+            wrap.Children.Add(_panelAvz);
+            return wrap;
+        }
+
+        private StackPanel BuildEstandar()
+        {
+            var s = new StackPanel();
+            _cfgQty = NY930Theme.FInput("15");
+            _cfgSl  = NY930Theme.FInput("90");
+            _cfgTp  = NY930Theme.FInput("61");
+            s.Children.Add(NY930Theme.FieldRow("Contratos", _cfgQty));
+            s.Children.Add(NY930Theme.FieldRow("Stop Loss (ticks)", _cfgSl));
+            s.Children.Add(NY930Theme.FieldRow("Take Profit (ticks)", _cfgTp));
+            return s;
+        }
+
+        private StackPanel BuildAvanzada()
+        {
+            var s = new StackPanel();
+
+            _accBe = new NY930Theme.Accordion("1. Breakeven", false, withTopBorder: false);
+            _beTrigger = NY930Theme.FInput("30");
+            _beOffset  = NY930Theme.FInput("5");
+            _accBe.Body.Children.Add(BuildTwoFieldRow("Ticks activar", _beTrigger, "Offset SL", _beOffset));
+            s.Children.Add(_accBe);
+
+            _accTs = new NY930Theme.Accordion("2. Trailing Stop", false);
+            _tsTrigger = NY930Theme.FInput("35");
+            _tsStep    = NY930Theme.FInput("5");
+            _accTs.Body.Children.Add(BuildTwoFieldRow("Ticks activar", _tsTrigger, "Escalón", _tsStep));
+            s.Children.Add(_accTs);
+
+            _accPar = new NY930Theme.Accordion("3. Parciales", false);
+            _p1Ticks = NY930Theme.FInput("30");
+            _p1Qty   = NY930Theme.FInput("5");
+            _p2Ticks = NY930Theme.FInput("50");
+            _p2Qty   = NY930Theme.FInput("5");
+            _accPar.Body.Children.Add(NY930Theme.AccordionSubLabel("P1"));
+            _accPar.Body.Children.Add(BuildTwoFieldRow("Ticks", _p1Ticks, "Contratos", _p1Qty));
+            _accPar.Body.Children.Add(NY930Theme.AccordionSubLabel("P2"));
+            _accPar.Body.Children.Add(BuildTwoFieldRow("Ticks", _p2Ticks, "Contratos", _p2Qty));
+            s.Children.Add(_accPar);
+
+            _accGg = new NY930Theme.Accordion("4. Gap Guards", true);
+            _slGgTicks = NY930Theme.FInput("5");
+            _slGgSecs  = NY930Theme.FInput("1");
+            _accGg.Body.Children.Add(NY930Theme.AccordionSubLabel("4.1 SL Guard"));
+            _accGg.Body.Children.Add(BuildTwoFieldRow("Ticks", _slGgTicks, "Segundos", _slGgSecs));
+
+            var modeHead = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 4) };
+            modeHead.Children.Add(new TextBlock
+            {
+                Text = "4.2", FontSize = 9, FontWeight = FontWeights.Bold,
+                Foreground = NY930Theme.GoldBrush, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0)
+            });
+            _ggTpBtn = new NY930Theme.TabButton("TP Guard", true)   { Padding = new Thickness(9, 2, 9, 2), Margin = new Thickness(0, 0, 4, 0) };
+            _ggTrBtn = new NY930Theme.TabButton("Trailing TP", false) { Padding = new Thickness(9, 2, 9, 2) };
+            _ggTpBtn.Click += (s2, e2) => { _ggTpBtn.SetActive(true); _ggTrBtn.SetActive(false); _ggTpFields.Visibility = Visibility.Visible; _ggTrFields.Visibility = Visibility.Collapsed; };
+            _ggTrBtn.Click += (s2, e2) => { _ggTpBtn.SetActive(false); _ggTrBtn.SetActive(true); _ggTpFields.Visibility = Visibility.Collapsed; _ggTrFields.Visibility = Visibility.Visible; };
+            modeHead.Children.Add(_ggTpBtn);
+            modeHead.Children.Add(_ggTrBtn);
+            _accGg.Body.Children.Add(modeHead);
+
+            _ggTpFields = new StackPanel();
+            _tpGgTicks = NY930Theme.FInput("5");
+            _tpGgSecs  = NY930Theme.FInput("1");
+            _ggTpFields.Children.Add(BuildTwoFieldRow("Ticks", _tpGgTicks, "Segundos", _tpGgSecs));
+            _accGg.Body.Children.Add(_ggTpFields);
+
+            _ggTrFields = new StackPanel { Visibility = Visibility.Collapsed };
+            _trDist    = NY930Theme.FInput("10");
+            _trTimeout = NY930Theme.FInput("2");
+            _ggTrFields.Children.Add(BuildTwoFieldRow("Distancia", _trDist, "Timeout(s)", _trTimeout));
+            _accGg.Body.Children.Add(_ggTrFields);
+            s.Children.Add(_accGg);
+
+            _accSt = new NY930Theme.Accordion("5. Salida por Tiempo", false);
+            _stDuration = NY930Theme.FInput("10");
+            _stMode = NY930Theme.FSelect(95);
+            _stMode.Items.Add("Siempre");
+            _stMode.Items.Add("Si +");
+            _stMode.Items.Add("Poner TP");
+            _stMode.SelectedIndex = 2;
+            _accSt.Body.Children.Add(BuildTwoFieldRow("Duración (seg)", _stDuration, "Modo", _stMode));
+            var beyondRow = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+            beyondRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            beyondRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            _stBeyondTpTog = new NY930Theme.ToggleSwitch(true);
+            Grid.SetColumn(_stBeyondTpTog, 0); beyondRow.Children.Add(_stBeyondTpTog);
+            var beyondLbl = new TextBlock
+            {
+                Text = "Cerrar si superó TP", FontSize = 10,
+                Foreground = NY930Theme.Text2Brush, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0)
+            };
+            Grid.SetColumn(beyondLbl, 1); beyondRow.Children.Add(beyondLbl);
+            _accSt.Body.Children.Add(beyondRow);
+            s.Children.Add(_accSt);
+            return s;
+        }
+
+        private FrameworkElement BuildTwoFieldRow(string lbl1, FrameworkElement input1, string lbl2, FrameworkElement input2)
+        {
+            var s = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+            s.Children.Add(new TextBlock { Text = lbl1, FontSize = 10, Foreground = NY930Theme.Text2Brush,
+                                            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+            input1.Margin = new Thickness(0, 0, 12, 0);
+            s.Children.Add(input1);
+            s.Children.Add(new TextBlock { Text = lbl2, FontSize = 10, Foreground = NY930Theme.Text2Brush,
+                                            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+            s.Children.Add(input2);
+            return s;
+        }
+
+        // ── Apply / Cambiar ───────────────────────────────────
+        private FrameworkElement BuildApplyArea()
+        {
+            var stack = new StackPanel { Margin = new Thickness(9, 10, 9, 14) };
+            _btnApply = NY930Theme.ApplyButton("▶ Aplicar cambios");
+            _btnApply.Click += (s, e) => { ApplyParametersToStrategy(); FlashApply(); };
+            _btnChangeStrat = NY930Theme.ApplyButton("↩ Cambiar de estrategia");
+            _btnChangeStrat.Margin = new Thickness(0, 5, 0, 0);
+            _btnChangeStrat.Click += (s, e) => _shell.Show(new NY930HomeView(_shell));
+            stack.Children.Add(_btnApply);
+            stack.Children.Add(_btnChangeStrat);
+            return stack;
+        }
+
+        private void FlashApply()
+        {
+            var orig = _btnApply.Content;
+            _btnApply.Content = "✓ Aplicado";
+            _btnApply.Background = NY930Theme.GoldBrush;
+            _btnApply.Foreground = Brushes.Black;
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
+            t.Tick += (s, e) =>
+            {
+                _btnApply.Content = orig;
+                _btnApply.Background = Brushes.Transparent;
+                _btnApply.Foreground = NY930Theme.GoldBrush;
+                t.Stop();
+            };
+            t.Start();
+        }
+
+        // ── Schedule activate/deactivate ──────────────────────
+        private void ActivarHorario()
+        {
+            ApplyParametersToStrategy();
+
+            int hh = ParseInt(_hh.Text) ?? 9;
+            int mm = ParseInt(_hm.Text) ?? 29;
+            int ss = ParseInt(_hs.Text) ?? 58;
+            string ap = _ampm.SelectedItem != null ? _ampm.SelectedItem.ToString() : "AM";
+            int hour24 = hh % 12;
+            if (string.Equals(ap, "PM", StringComparison.OrdinalIgnoreCase)) hour24 += 12;
+
+            var now = DateTime.Now;
+            var t = new DateTime(now.Year, now.Month, now.Day, hour24, mm, ss);
+            if (t <= now) t = t.AddDays(1);
+            _scheduledEntry = t;
+            _scheduleArmed = true;
+
+            _scheduleForm.Visibility      = Visibility.Collapsed;
+            _scheduleCountdown.Visibility = Visibility.Visible;
             RefreshCountdown();
         }
 
-        private void UpdateHeaderTag(NY930HedgeSnapshot s)
+        private void DesactivarHorario()
         {
-            if (s.InPosition)
-            {
-                Color tint = s.Direction == "Long" ? NY930Theme.SuccessGreen : NY930Theme.DangerRed;
-                string txt = s.Direction == "Long" ? NY930Localization.T("hedge.long").ToUpperInvariant()
-                                                     : NY930Localization.T("hedge.short").ToUpperInvariant();
-                _header.StatusTag.Update(txt, tint);
-            }
-            else if (s.SessionDone)
-                _header.StatusTag.Update(NY930Localization.T("status.session_done"), NY930Theme.TextNavyMid);
-            else
-                _header.StatusTag.Update("WAITING", NY930Theme.WarnAmberHi);
-        }
-
-        private void UpdateTpRow(NY930Theme.NavyTpRow row, string label, double price, bool done,
-                                 NY930HedgeSnapshot s, int targetTicks)
-        {
-            if (price <= 0) { row.SetIdle(string.Format(NY930Localization.T("trade.tp.pending"), label)); return; }
-
-            string baseLabelDone     = string.Format(NY930Localization.T("trade.tp.reached"),     label);
-            string baseLabelActive   = string.Format(NY930Localization.T("trade.tp.in_progress"), label);
-            string baseLabelPending  = string.Format(NY930Localization.T("trade.tp.pending"),     label);
-
-            string ticksTxt = (targetTicks > 0 ? "+" : "") + targetTicks + " " + NY930Localization.T("common.ticks");
-
-            if (done)
-            {
-                row.SetDone(baseLabelDone, ticksTxt, "");
-            }
-            else if (s.InPosition)
-            {
-                double progress = 0;
-                if (targetTicks > 0 && s.UnrealizedTicks > 0)
-                    progress = Math.Max(0, Math.Min(1, s.UnrealizedTicks / (double)targetTicks));
-                int currentTicks = (int)Math.Max(0, Math.Round(s.UnrealizedTicks));
-                string activeTicksTxt = "+" + currentTicks + " / " + targetTicks + " " + NY930Localization.T("common.ticks");
-                row.SetActive(baseLabelActive, activeTicksTxt, "", progress);
-            }
-            else
-            {
-                row.SetPending(baseLabelPending, ticksTxt, "");
-            }
-        }
-
-        private void UpdateSlRow(NY930Theme.NavyTpRow row, NY930HedgeSnapshot s)
-        {
-            if (s.SlPrice <= 0) { row.SetIdle(NY930Localization.T("trade.sl.label")); return; }
-
-            if (s.LastResult != null && s.LastResult.SlHit && !s.InPosition)
-            {
-                row.SetDone(NY930Localization.T("trade.sl.hit"),
-                    s.SlPrice.ToString("F5", CultureInfo.InvariantCulture), "");
-                return;
-            }
-
-            if (s.InPosition && s.LastPrice > 0 && s.TickSize > 0)
-            {
-                double distTicks = s.Direction == "Long"
-                    ? (s.LastPrice - s.SlPrice) / s.TickSize
-                    : (s.SlPrice - s.LastPrice) / s.TickSize;
-                if (distTicks <= 5)
-                {
-                    row.SetDanger(NY930Localization.T("trade.sl.danger"),
-                        string.Format("SL a {0:F0} ticks", Math.Max(0, distTicks)));
-                    return;
-                }
-            }
-
-            string ticksTxt = "-" + s.StopLossTicks + " " + NY930Localization.T("common.ticks");
-            row.SetPending(NY930Localization.T("trade.sl.label"), ticksTxt, "");
+            _scheduleArmed = false;
+            _scheduleForm.Visibility = Visibility.Visible;
+            _scheduleCountdown.Visibility = Visibility.Collapsed;
+            _countdownTb.Text = "00:00:00";
+            _countdownTb.Foreground = NY930Theme.GoldLightBrush;
         }
 
         private void RefreshCountdown()
         {
-            if (_countdownLabel == null) return;
-            if (_entryTime == DateTime.MinValue || _entryTime == default(DateTime))
+            if (!_scheduleArmed || _countdownTb == null) return;
+            DateTime now = DateTime.Now;
+            if (now >= _scheduledEntry)
             {
-                _countdownLabel.Text = "";
+                _countdownTb.Text = "00:00:00";
+                _countdownTb.Foreground = NY930Theme.GoldLightBrush;
                 return;
             }
-            DateTime now = DateTime.Now;
-            if (now >= _entryTime) { _countdownLabel.Text = ""; return; }
-            TimeSpan rem = _entryTime - now;
-            string txt = string.Format("{0:D2}:{1:D2}:{2:D2}",
+            var rem = _scheduledEntry - now;
+            _countdownTb.Text = string.Format("{0:D2}:{1:D2}:{2:D2}",
                 (int)rem.TotalHours, rem.Minutes, rem.Seconds);
-            _countdownLabel.Text = string.Format(NY930Localization.T("status.countdown"), txt);
+            _countdownTb.Foreground = rem.TotalSeconds <= 60
+                ? NY930Theme.RedBrush : NY930Theme.GoldLightBrush;
         }
 
-        private void RenderEmpty()
+        // ── Precio activate / deactivate ──────────────────────
+        private void ActivarPrecio()
         {
-            _instrumentText.Text = "—";
-            _countdownLabel.Text = "";
-            _header.StatusTag.Update("NO STRATEGY", NY930Theme.TextNavyLow);
+            ApplyParametersToStrategy();
+            double price;
+            if (!double.TryParse(_priceInput.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out price)
+                || price <= 0)
+            {
+                FlashError(_priceInput);
+                return;
+            }
 
-            _bigPnL.Update(0, 0, "None");
-            _pillCurrency.Visibility = _pillDuration.Visibility = _pillContracts.Visibility = Visibility.Collapsed;
+            _precioActiveTb.Text = price.ToString("N2", CultureInfo.CurrentCulture);
+            _precioForm.Visibility   = Visibility.Collapsed;
+            _precioActive.Visibility = Visibility.Visible;
 
-            _tp1Row.SetIdle("TP1");
-            _tp2Row.SetIdle("TP2");
-            _tpRow.SetIdle("TP");
-            _slRow.SetIdle("SL");
-
-            _btnBreakeven.IsEnabled = _btnCloseNow.IsEnabled = false;
-            _btnPartial.IsEnabled   = _btnTrailing.IsEnabled = false;
-            _btnBuyNow.IsEnabled    = _btnSellNow.IsEnabled  = false;
-            _btnCancelEntry.IsEnabled = false;
+            // Tell the strategy to start price-trigger monitoring.
+            // (Wired in Step 9 — strategy handles this action.)
+            NY930Bridge.RequestHedgeAction(new NY930Action
+            {
+                Type   = NY930ActionType.HedgeApplyParameters,
+                Parameters = new NY930Parameters
+                {
+                    // EntryPrice is handled by Step 9 (new field).
+                    // For now we send an immediate Buy/Sell only when
+                    // the strategy implements price-trigger mode.
+                }
+            });
         }
 
-        public void RefreshLocalization()
+        private void DesactivarPrecio()
         {
-            _hdrActions.Text     = NY930Localization.T("trade.section.actions");
-            _hdrManagement.Text  = NY930Localization.T("trade.section.management");
-            _btnBreakeven.Content = NY930Localization.T("trade.action.breakeven");
-            _btnCloseNow.Content  = NY930Localization.T("trade.action.close_now");
-            _btnPartial.Content   = NY930Localization.T("trade.action.partial");
-            _btnTrailing.Content  = NY930Localization.T("trade.action.trailing");
-            _btnBuyNow.Content    = NY930Localization.T("or.buy_now");
-            _btnSellNow.Content   = NY930Localization.T("or.sell_now");
-            _btnCancelEntry.Content = NY930Localization.T("or.cancel");
-            _btnEditParams.Content  = NY930Localization.T("params.title");
-
-            var current = NY930Bridge.GetHedge();
-            if (current != null) Render(current);
-            else                 RenderEmpty();
+            _precioActive.Visibility = Visibility.Collapsed;
+            _precioForm.Visibility   = Visibility.Visible;
         }
+
+        private void FlashError(Control c)
+        {
+            var orig = c.BorderBrush;
+            c.BorderBrush = NY930Theme.RedBrush;
+            var t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
+            t.Tick += (s, e) => { c.BorderBrush = orig; t.Stop(); };
+            t.Start();
+        }
+
+        // ── Manual entry ──────────────────────────────────────
+        private void DoManualEntry()
+        {
+            ApplyParametersToStrategy();
+            if (_selectedSide == "buy")
+                NY930Bridge.RequestHedgeAction(new NY930Action { Type = NY930ActionType.HedgeBuyNow });
+            else if (_selectedSide == "sell")
+                NY930Bridge.RequestHedgeAction(new NY930Action { Type = NY930ActionType.HedgeSellNow });
+            else
+                FlashError(_btnBuy);
+        }
+
+        // ── Apply parameters to strategy ──────────────────────
+        private void ApplyParametersToStrategy()
+        {
+            int hh = ParseInt(_hh.Text) ?? 9;
+            int mm = ParseInt(_hm.Text) ?? 29;
+            int ss = ParseInt(_hs.Text) ?? 58;
+            string ap = _ampm.SelectedItem != null ? _ampm.SelectedItem.ToString() : "AM";
+            int hour24 = hh % 12;
+            if (string.Equals(ap, "PM", StringComparison.OrdinalIgnoreCase)) hour24 += 12;
+
+            string direction = _selectedSide == "buy"  ? "Long"
+                              : _selectedSide == "sell" ? "Short" : null;
+
+            var p = new NY930Parameters
+            {
+                EntryHour   = hour24,
+                EntryMinute = mm,
+                EntrySecond = ss,
+                Quantity    = ParseInt(_cfgQty.Text),
+                StopLossTicks   = ParseInt(_cfgSl.Text),
+                TakeProfitTicks = ParseInt(_cfgTp.Text),
+                Direction   = direction,
+
+                EnableBreakeven  = _accBe.IsOn,
+                EnableTrailing   = _accTs.IsOn,
+                EnablePartials   = _accPar.IsOn,
+                EnableTimeExit   = _accSt.IsOn,
+                EnableTpGapGuard = _accGg.IsOn,
+                EnableSlGapGuard = _accGg.IsOn,
+                TpGapGuardTicks  = ParseInt(_tpGgTicks.Text),
+                SlGapGuardTicks  = ParseInt(_slGgTicks.Text)
+            };
+
+            NY930Bridge.RequestHedgeAction(new NY930Action
+            {
+                Type       = NY930ActionType.HedgeApplyParameters,
+                Parameters = p
+            });
+        }
+
+        // ── Snapshot binding ──────────────────────────────────
+        private void OnSnapshot(NY930HedgeSnapshot s) => Dispatcher.InvokeAsync(() => ApplySnapshotToInputs(s));
+
+        private void ApplySnapshotToInputs(NY930HedgeSnapshot s)
+        {
+            if (s == null) return;
+            if (s.EntryTime != default(DateTime) && _hh != null && string.IsNullOrEmpty(_hh.Text))
+            {
+                int h12 = s.EntryTime.Hour % 12;
+                if (h12 == 0) h12 = 12;
+                _hh.Text = h12.ToString();
+                _hm.Text = s.EntryTime.Minute.ToString();
+                _hs.Text = s.EntryTime.Second.ToString();
+                _ampm.SelectedIndex = s.EntryTime.Hour >= 12 ? 1 : 0;
+            }
+            if (s.Quantity > 0 && string.IsNullOrEmpty(_cfgQty.Text))
+                _cfgQty.Text = s.Quantity.ToString();
+            if (s.StopLossTicks > 0 && string.IsNullOrEmpty(_cfgSl.Text))
+                _cfgSl.Text = s.StopLossTicks.ToString();
+            if (s.TakeProfitTicks > 0 && string.IsNullOrEmpty(_cfgTp.Text))
+                _cfgTp.Text = s.TakeProfitTicks.ToString();
+
+            if (s.Direction == "Long" && _selectedSide != "buy")  SelectSide("buy");
+            if (s.Direction == "Short" && _selectedSide != "sell") SelectSide("sell");
+
+            // Auto-route to in-trade view on fill.
+            if (s.InPosition && _shell.CurrentViewIs<NY930HedgeView>())
+                _shell.Show(new NY930ProgressView(_shell, isOpenRange: false));
+            if (s.LastResult != null && !s.InPosition && s.SessionDone
+                && _shell.CurrentViewIs<NY930HedgeView>())
+                _shell.Show(new NY930ResultView(_shell, s.LastResult));
+        }
+
+        private static int? ParseInt(string text)
+        {
+            int v;
+            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out v))
+                return v;
+            return null;
+        }
+
+        public void RefreshLocalization() { /* labels are Spanish */ }
 
         public void Dispose()
         {
