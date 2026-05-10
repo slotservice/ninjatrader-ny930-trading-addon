@@ -378,10 +378,11 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             var hourGroup = new StackPanel { Orientation = Orientation.Horizontal,
                                               HorizontalAlignment = HorizontalAlignment.Center,
                                               VerticalAlignment   = VerticalAlignment.Center };
-            _hh = NY930Theme.FInput("9",  27);
-            _hm = NY930Theme.FInput("29", 27);
-            _hs = NY930Theme.FInput("58", 27);
-            _ampm = NY930Theme.FSelect(40);
+            // Same width bump as OpenRangeView — see comment there.
+            _hh = NY930Theme.FInput("9",  36);
+            _hm = NY930Theme.FInput("29", 36);
+            _hs = NY930Theme.FInput("58", 36);
+            _ampm = NY930Theme.FSelect(46);
             _ampm.Items.Add("AM");
             _ampm.Items.Add("PM");
             _ampm.SelectedIndex = 0;

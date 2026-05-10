@@ -265,10 +265,15 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             var hourGroup = new StackPanel { Orientation = Orientation.Horizontal,
                                               HorizontalAlignment = HorizontalAlignment.Center,
                                               VerticalAlignment   = VerticalAlignment.Center };
-            _hh   = NY930Theme.FInput("9",  27);
-            _hm   = NY930Theme.FInput("29", 27);
-            _hs   = NY930Theme.FInput("58", 27);
-            _ampm = NY930Theme.FSelect(40);
+            // Width bumped from 27 → 36 (v1.3.1 fix). 27px in CSS
+            // includes padding via box-sizing:border-box; WPF's
+            // Width does NOT include padding, so 27px ended up
+            // clipping the digit. 36px matches the visual width
+            // of the HTML mockup.
+            _hh   = NY930Theme.FInput("9",  36);
+            _hm   = NY930Theme.FInput("29", 36);
+            _hs   = NY930Theme.FInput("58", 36);
+            _ampm = NY930Theme.FSelect(46);
             _ampm.Items.Add("AM");
             _ampm.Items.Add("PM");
             _ampm.SelectedIndex = 0;
