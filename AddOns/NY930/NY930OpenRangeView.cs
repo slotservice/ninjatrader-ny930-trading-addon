@@ -106,6 +106,14 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private DateTime _scheduledEntry;
         private bool _scheduleArmed;
 
+        // Tracks whether we've done the one-shot restoration of
+        // accordion / toggle / mode-pill state from the strategy
+        // snapshot. After the first snapshot we DON'T overwrite
+        // these controls anymore — otherwise the high-frequency
+        // snapshot stream would snap accordions closed every
+        // time the user expands one before clicking "Aplicar".
+        private bool _snapshotInitialized;
+
         public NY930OpenRangeView(NY930ShellView shell)
         {
             _shell     = shell;
@@ -838,42 +846,42 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             if (s.Quantity > 0 && string.IsNullOrEmpty(_cfgQty.Text))
                 _cfgQty.Text = s.Quantity.ToString();
 
-            if (_accLong != null)  _accLong.Set(s.EnableLong);
-            if (_accShort != null) _accShort.Set(s.EnableShort);
-
-            // SSR is created at construction time so we can restore
-            // its state on every snapshot. No empty-check — the user
-            // never types into a toggle, so the strategy is the
-            // source of truth.
-            if (_ssrToggle != null) _ssrToggle.Set(s.EnableSingleStopReverseProtection);
-            if (_ssrTicks  != null && s.SingleStopReverseTicks > 0
-                && string.IsNullOrEmpty(_ssrTicks.Text))
-                _ssrTicks.Text = s.SingleStopReverseTicks.ToString();
-
-            UpdateSsrSlots();
-
-            // Avanzada accordion + Gap Guard 4.2 mode restoration so
-            // the user sees the strategy's actual config on reload
-            // instead of the WPF default.
-            if (_accGg != null) _accGg.Set(s.EnableTpGapGuard || s.EnableSlGapGuard || s.EnableTrailingTP);
-            if (_ggTpBtn != null && _ggTrBtn != null)
-            {
-                if      (s.EnableTrailingTP) SetGgMode(false);
-                else if (s.EnableTpGapGuard) SetGgMode(true);
-            }
+            // TextBox empty-fills run on every snapshot (their
+            // string.IsNullOrEmpty guard prevents clobbering user
+            // typing). Accordion / toggle / mode-pill restoration
+            // is gated to ONCE — see _snapshotInitialized comment.
             if (s.TpGapGuardTicks > 0 && _tpGgTicks != null && string.IsNullOrEmpty(_tpGgTicks.Text))
                 _tpGgTicks.Text = s.TpGapGuardTicks.ToString();
             if (s.SlGapGuardTicks > 0 && _slGgTicks != null && string.IsNullOrEmpty(_slGgTicks.Text))
                 _slGgTicks.Text = s.SlGapGuardTicks.ToString();
-
-            // Salida por Tiempo restoration so the dropdown / duration
-            // / "Cerrar si superó TP" toggle reflect strategy state.
-            if (_accSt != null) _accSt.Set(s.EnableTimeExit);
             if (_stDuration != null && s.TimeExitDurationSeconds > 0
                 && string.IsNullOrEmpty(_stDuration.Text))
                 _stDuration.Text = s.TimeExitDurationSeconds.ToString();
-            RestoreStModeFromKey(s.TimeExitMode);
-            if (_stBeyondTpTog != null) _stBeyondTpTog.Set(s.CloseIfBeyondTP);
+            if (_ssrTicks != null && s.SingleStopReverseTicks > 0
+                && string.IsNullOrEmpty(_ssrTicks.Text))
+                _ssrTicks.Text = s.SingleStopReverseTicks.ToString();
+
+            if (!_snapshotInitialized)
+            {
+                // First snapshot: align UI to strategy's actual state.
+                if (_accLong  != null) _accLong.Set(s.EnableLong);
+                if (_accShort != null) _accShort.Set(s.EnableShort);
+                if (_ssrToggle != null) _ssrToggle.Set(s.EnableSingleStopReverseProtection);
+                UpdateSsrSlots();
+
+                if (_accGg != null) _accGg.Set(s.EnableTpGapGuard || s.EnableSlGapGuard || s.EnableTrailingTP);
+                if (_ggTpBtn != null && _ggTrBtn != null)
+                {
+                    if      (s.EnableTrailingTP) SetGgMode(false);
+                    else if (s.EnableTpGapGuard) SetGgMode(true);
+                }
+
+                if (_accSt != null) _accSt.Set(s.EnableTimeExit);
+                RestoreStModeFromKey(s.TimeExitMode);
+                if (_stBeyondTpTog != null) _stBeyondTpTog.Set(s.CloseIfBeyondTP);
+
+                _snapshotInitialized = true;
+            }
 
             // Auto-route to control view once stops are placed
             // and still working (no fill yet).

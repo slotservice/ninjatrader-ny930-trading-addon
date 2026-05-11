@@ -86,6 +86,12 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private DateTime _scheduledEntry;
         private bool     _scheduleArmed;
 
+        // One-shot snapshot restoration — see equivalent comment
+        // in NY930OpenRangeView. Without this gate, every snapshot
+        // would force-collapse accordions / reset toggles, so the
+        // user's clicks would silently undo themselves.
+        private bool _snapshotInitialized;
+
         public NY930HedgeView(NY930ShellView shell)
         {
             _shell = shell;
@@ -863,14 +869,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             if (s.Direction == "Long" && _selectedSide != "buy")  SelectSide("buy");
             if (s.Direction == "Short" && _selectedSide != "sell") SelectSide("sell");
 
-            // Avanzada accordion + Salida por Tiempo restoration
-            // mirrors NY930OpenRangeView so the user sees the
-            // strategy's actual config on reload.
-            if (_accBe  != null) _accBe.Set(s.EnableBreakeven);
-            if (_accTs  != null) _accTs.Set(s.EnableTrailing);
-            if (_accPar != null) _accPar.Set(s.EnablePartials);
-            if (_accGg  != null) _accGg.Set(s.EnableTpGapGuard || s.EnableSlGapGuard || s.EnableTrailingTP);
-            if (_accSt  != null) _accSt.Set(s.EnableTimeExit);
+            // TextBox empty-fills on every snapshot (the
+            // string.IsNullOrEmpty guard prevents clobbering user
+            // typing). Accordion / toggle restoration is one-shot.
             if (s.TpGapGuardTicks > 0 && _tpGgTicks != null && string.IsNullOrEmpty(_tpGgTicks.Text))
                 _tpGgTicks.Text = s.TpGapGuardTicks.ToString();
             if (s.SlGapGuardTicks > 0 && _slGgTicks != null && string.IsNullOrEmpty(_slGgTicks.Text))
@@ -878,8 +879,18 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             if (_stDuration != null && s.TimeExitDurationSeconds > 0
                 && string.IsNullOrEmpty(_stDuration.Text))
                 _stDuration.Text = s.TimeExitDurationSeconds.ToString();
-            RestoreStModeFromKey(s.TimeExitMode);
-            if (_stBeyondTpTog != null) _stBeyondTpTog.Set(s.CloseIfBeyondTP);
+
+            if (!_snapshotInitialized)
+            {
+                if (_accBe  != null) _accBe.Set(s.EnableBreakeven);
+                if (_accTs  != null) _accTs.Set(s.EnableTrailing);
+                if (_accPar != null) _accPar.Set(s.EnablePartials);
+                if (_accGg  != null) _accGg.Set(s.EnableTpGapGuard || s.EnableSlGapGuard || s.EnableTrailingTP);
+                if (_accSt  != null) _accSt.Set(s.EnableTimeExit);
+                RestoreStModeFromKey(s.TimeExitMode);
+                if (_stBeyondTpTog != null) _stBeyondTpTog.Set(s.CloseIfBeyondTP);
+                _snapshotInitialized = true;
+            }
 
             // Auto-route to in-trade view on fill.
             if (s.InPosition && _shell.CurrentViewIs<NY930HedgeView>())
