@@ -163,7 +163,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                                             // when Price mode armed
 
         // ── Estado persistente (static) ───────────────────────────
-        private static bool   _saveOrdersPlaced  = false;
+        private static bool             _saveOrdersPlaced = false;
+        // v1.5 timeframe-change fix: Direccion is an instance
+        // property that resets on every SetDefaults call (i.e. on
+        // every strategy reload, including timeframe flips). Without
+        // persisting it the recovery code in RestaurarEstado used a
+        // default side and submitted orders with the wrong
+        // OrderAction (BuyToCover instead of Sell, or vice-versa),
+        // which got rejected — that's the "SL/TP lost after
+        // timeframe change" bug the client reported.
+        private static DireccionEntrada _saveDireccion    = DireccionEntrada.SinOperacion;
         private static bool   _saveExitPlaced    = false;
         private static bool   _saveSessionDone   = false;
         private static double _saveFillPrice     = 0;
@@ -239,12 +248,24 @@ namespace NinjaTrader.NinjaScript.Strategies
                 BarsRequiredToTrade          = 0;
             }
 
-            else if (State == State.Realtime)
+            else if (State == State.DataLoaded)
             {
-                // Wire the structured logger to NinjaScript output
+                // v1.5 fix: Register the strategy with the Bridge as
+                // soon as data loads, NOT when State.Realtime fires.
+                // State.Realtime only triggers when new live ticks
+                // arrive — if the market is closed (e.g. user
+                // attaches at 1 AM to test for the 9:30 NY open),
+                // Realtime never fires and the UI thinks the strategy
+                // isn't attached. Wire the loggers here too so we get
+                // useful output during historical replay.
                 NY930Log.PrintSink = msg => Print(msg);
                 NY930Log.LogSink   = (msg, lvl) => Log(msg, lvl);
                 NY930Bridge.RegisterHedge();
+                NY930Log.Info(SRC, "Hedge strategy attached (DataLoaded).");
+            }
+
+            else if (State == State.Realtime)
+            {
 
                 if (EnablePartials)
                 {
@@ -389,6 +410,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (!hayEstado) return;
 
             _saveOrdersPlaced  = hayEstado;
+            _saveDireccion     = Direccion;   // v1.5 fix — see decl
             _saveExitPlaced    = exitOrdersPlaced;
             _saveSessionDone   = sessionDone;
             _saveFillPrice     = entryFill;
@@ -425,6 +447,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 
             NY930Log.Separator(SRC);
             NY930Log.Info(SRC, "Restaurando estado...");
+
+            // v1.5 fix: restore Direccion BEFORE the order-resubmit
+            // block so esLong (computed there) reads the original
+            // trade side, not the SetDefaults default.
+            if (_saveDireccion != DireccionEntrada.SinOperacion)
+            {
+                Direccion = _saveDireccion;
+                NY930Log.Info(SRC, "  Direccion      : " + _saveDireccion + " (restaurada)");
+            }
 
             lastDate           = DateTime.Now.Date;
             ordersPlaced       = _saveOrdersPlaced;
@@ -700,29 +731,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
 
-            // ── 3.5 NY930 v1.3 Price-triggered entry ─────────────
-            // Only acts when EntryMode is Price AND we are armed
-            // AND no entry order has been placed yet for the day.
-            // When the price crosses EntryPrice in the configured
-            // direction, fire the same market entry the timer would.
-            if (_priceEntryArmed && EntryMode == EntryModeNY930.Price
-                && !ordersPlaced && !sessionDone && lastPrice > 0
-                && EntryPrice > 0)
-            {
-                bool esLong = (Direccion == DireccionEntrada.Long);
-                bool crossed = esLong
-                    ? (_priceEntryAnchor < EntryPrice && lastPrice >= EntryPrice)
-                      || (_priceEntryAnchor > EntryPrice && lastPrice >= EntryPrice)
-                    : (_priceEntryAnchor > EntryPrice && lastPrice <= EntryPrice)
-                      || (_priceEntryAnchor < EntryPrice && lastPrice <= EntryPrice);
-                if (crossed)
-                {
-                    NY930Log.Info(SRC, "Price-trigger: " + lastPrice
-                        + " cruzo objetivo " + EntryPrice + ". Disparando entrada.");
-                    _priceEntryArmed = false;
-                    ColocarEntradaMercado();
-                }
-            }
+            // ── 3.5 Price-triggered entry — DISABLED in v1.5 ──────
+            // The client removed the Precio entry mode from the UI.
+            // Strategy keeps the enum value + property to avoid
+            // breaking persisted state, but the firing path is
+            // intentionally a no-op. If a stale config somehow leaves
+            // EntryMode=Price, the strategy will simply wait for
+            // Time or Manual trigger instead.
 
             // ── 4. TP / SL GAP GUARD ──────────────────────────────
             EvaluarGapGuards(now);
@@ -1707,30 +1722,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                 if (!inTrade && !string.IsNullOrEmpty(p.EntryMode))
                 {
-                    if (p.EntryMode.Equals("Price",  StringComparison.OrdinalIgnoreCase)) EntryMode = EntryModeNY930.Price;
-                    else if (p.EntryMode.Equals("Manual", StringComparison.OrdinalIgnoreCase)) EntryMode = EntryModeNY930.Manual;
+                    // v1.5: Precio entry was removed from the UI.
+                    // Treat any incoming "Price" mode as Manual so a
+                    // stale persisted parameter set doesn't arm a
+                    // path the user can no longer disable from the UI.
+                    if      (p.EntryMode.Equals("Manual", StringComparison.OrdinalIgnoreCase)) EntryMode = EntryModeNY930.Manual;
+                    else if (p.EntryMode.Equals("Price",  StringComparison.OrdinalIgnoreCase)) EntryMode = EntryModeNY930.Manual;
                     else                                                                       EntryMode = EntryModeNY930.Time;
                 }
-                if (!inTrade && p.EntryPrice != null) EntryPrice = Math.Max(0, p.EntryPrice.Value);
-
-                // Arm price-trigger monitor when entering Price mode
-                // with a positive EntryPrice. The anchor records the
-                // current price so we know which side of EntryPrice
-                // we started on.
-                if (!inTrade && EntryMode == EntryModeNY930.Price
-                    && EntryPrice > 0 && lastPrice > 0
-                    && Direccion != DireccionEntrada.SinOperacion)
-                {
-                    _priceEntryAnchor = lastPrice;
-                    _priceEntryArmed  = true;
-                    NY930Log.Info(SRC, "Price-trigger armed @anchor=" + lastPrice
-                        + " target=" + EntryPrice + " dir=" + Direccion);
-                }
-                else
-                {
-                    _priceEntryArmed = EntryMode == EntryModeNY930.Price && EntryPrice > 0
-                                       && Direccion != DireccionEntrada.SinOperacion;
-                }
+                if (!inTrade && p.EntryPrice != null) EntryPrice = 0; // ignore — Precio removed in v1.5
+                _priceEntryArmed = false;
 
                 if (p.EnableBreakeven  != null) EnableBreakeven  = p.EnableBreakeven.Value;
                 if (p.EnableTrailing   != null) EnableTrailing   = p.EnableTrailing.Value;

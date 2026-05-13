@@ -92,7 +92,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public static readonly FontFamily HomeLogoFont = new FontFamily("Bebas Neue, Impact, Arial Black, Arial");
 
         // ── Standard panel width (matches HTML width:250px) ──
-        public const double PanelWidth = 250;
+        // v1.5: bumped from 250 → 290 to match the chart-injected panel
+        // column from NY930AddOn.cs and give the larger v1.5 typography
+        // enough horizontal room.
+        public const double PanelWidth = 290;
 
         // ════════════════════════════════════════════════════
         //  BACKWARD-COMPAT ALIASES
@@ -134,6 +137,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         public static readonly SolidColorBrush TextHiBrush     = TextBrush;
         public static readonly SolidColorBrush TextMidBrush    = Freeze(new SolidColorBrush(TextMid));
         public static readonly SolidColorBrush TextLowBrush    = Freeze(new SolidColorBrush(TextLow));
+        public static readonly SolidColorBrush TextDimBrush    = TextLowBrush;
         public static readonly SolidColorBrush LongGreenBrush  = GreenBrush;
         public static readonly SolidColorBrush ShortRedBrush   = RedBrush;
         public static readonly SolidColorBrush WarnAmberBrush  = Freeze(new SolidColorBrush(WarnAmber));
@@ -817,16 +821,21 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             };
         }
 
+        // v1.5 typography: bumped up across the board so the in-chart
+        // panel reads at the same scale as NinjaTrader Chart Trader
+        // (per client video 1 / video 3). The HTML reference also
+        // uses larger labels than the v1.3 pixel-match did.
+
         // ── SECTION LABEL ── matches `.section-lbl` / `.cfg-label`
         public static TextBlock SectionLabel(string text)
         {
             return new TextBlock
             {
                 Text       = text.ToUpperInvariant(),
-                FontSize   = 9,
+                FontSize   = 11,
                 FontWeight = FontWeights.Bold,
                 Foreground = Text3Brush,
-                Margin     = new Thickness(9, 6, 9, 4)
+                Margin     = new Thickness(9, 8, 9, 5)
             };
         }
 
@@ -836,7 +845,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             return new TextBlock
             {
                 Text       = text,
-                FontSize   = 10,
+                FontSize   = 12,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Text2Brush,
                 VerticalAlignment = VerticalAlignment.Center
@@ -844,9 +853,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         }
 
         // ── INPUT BOX ── matches `.finput`
-        public static TextBox FInput(string text = "", double width = 52)
+        // v1.5: gold-border-on-focus + red-border-on-validation-error.
+        public static TextBox FInput(string text = "", double width = 60)
         {
-            return new TextBox
+            var tb = new TextBox
             {
                 Text            = text,
                 Background      = Bg3Brush,
@@ -854,88 +864,127 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 BorderThickness = new Thickness(1),
                 Foreground      = TextBrush,
                 FontFamily      = MonoFont,
-                FontSize        = 10,
+                FontSize        = 12,
                 FontWeight      = FontWeights.SemiBold,
-                Padding         = new Thickness(4, 2, 4, 2),
+                Padding         = new Thickness(5, 3, 5, 3),
                 Width           = width,
                 TextAlignment   = TextAlignment.Center,
                 CaretBrush      = GoldBrush
             };
+            tb.GotFocus    += (s, e) => tb.BorderBrush = GoldBrush;
+            tb.LostFocus   += (s, e) => tb.BorderBrush = Border2Brush;
+            return tb;
         }
 
         // ── F-SELECT (combo box) ── matches `.fselect`
-        public static ComboBox FSelect(double width = 60)
+        public static ComboBox FSelect(double width = 70)
         {
-            return new ComboBox
+            var cb = new ComboBox
             {
                 Background      = Bg3Brush,
                 BorderBrush     = Border2Brush,
                 BorderThickness = new Thickness(1),
                 Foreground      = TextBrush,
                 FontFamily      = MonoFont,
-                FontSize        = 10,
+                FontSize        = 12,
                 FontWeight      = FontWeights.SemiBold,
-                Padding         = new Thickness(4, 2, 4, 2),
+                Padding         = new Thickness(5, 3, 5, 3),
                 Width           = width
             };
+            cb.GotFocus  += (s, e) => cb.BorderBrush = GoldBrush;
+            cb.LostFocus += (s, e) => cb.BorderBrush = Border2Brush;
+            return cb;
         }
 
         // ── ACTION BUTTON ── matches `.act-btn`
+        // v1.5: hover lifts the background to subtle white/red wash
+        // (matches the HTML reference's `.act-btn:hover` rule that
+        // the v1.3 build never carried over).
         public static Button ActionButton(string text, bool danger = false)
         {
             Color stroke = danger ? Red : Color.FromRgb(255,255,255);
             byte  alpha  = danger ? (byte)0xFF : (byte)0x99;
-            return new Button
+            var btn = new Button
             {
                 Content    = text,
                 Background = Brushes.Transparent,
                 Foreground = danger ? RedBrush : TextBrush,
                 BorderBrush = BrushAlpha(stroke, alpha),
                 BorderThickness = new Thickness(1),
-                Padding    = new Thickness(7, 2, 7, 2),
+                Padding    = new Thickness(9, 4, 9, 4),
                 FontFamily = MonoFont,
-                FontSize   = 10,
+                FontSize   = 12,
                 FontWeight = FontWeights.Bold,
                 Cursor     = System.Windows.Input.Cursors.Hand
             };
+            Brush hoverBg = BrushAlpha(stroke, danger ? (byte)0x1E : (byte)0x18);
+            btn.MouseEnter += (s, e) => { if (btn.IsEnabled) btn.Background = hoverBg; };
+            btn.MouseLeave += (s, e) => btn.Background = Brushes.Transparent;
+            return btn;
         }
 
         // ── APPLY BUTTON ── matches `.apply-btn`
+        // v1.5: hover fills with gold + flips text to black (matches
+        // HTML `.apply-btn:hover` reference).
         public static Button ApplyButton(string text)
         {
-            return new Button
+            var btn = new Button
             {
                 Content    = text,
                 Background = Brushes.Transparent,
                 Foreground = GoldBrush,
                 BorderBrush = GoldBrush,
                 BorderThickness = new Thickness(1),
-                Padding    = new Thickness(0, 7, 0, 7),
+                Padding    = new Thickness(0, 9, 0, 9),
                 FontFamily = MonoFont,
-                FontSize   = 10,
+                FontSize   = 12,
                 FontWeight = FontWeights.Bold,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Cursor     = System.Windows.Input.Cursors.Hand
             };
+            btn.MouseEnter += (s, e) =>
+            {
+                if (!btn.IsEnabled) return;
+                btn.Background = GoldBrush;
+                btn.Foreground = Brushes.Black;
+            };
+            btn.MouseLeave += (s, e) =>
+            {
+                btn.Background = Brushes.Transparent;
+                btn.Foreground = GoldBrush;
+            };
+            return btn;
         }
 
         // ── CANCEL BUTTON ── matches `.cancel-btn` (red outline)
         public static Button CancelButton(string text)
         {
-            return new Button
+            var btn = new Button
             {
                 Content    = text,
                 Background = BrushAlpha(Red, 0x14),
                 Foreground = BrushAlpha(Red, 0xCC),
                 BorderBrush = BrushAlpha(Red, 0x59),
                 BorderThickness = new Thickness(1),
-                Padding    = new Thickness(0, 7, 0, 7),
+                Padding    = new Thickness(0, 9, 0, 9),
                 FontFamily = MonoFont,
-                FontSize   = 10,
+                FontSize   = 12,
                 FontWeight = FontWeights.Bold,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Cursor     = System.Windows.Input.Cursors.Hand
             };
+            btn.MouseEnter += (s, e) =>
+            {
+                if (!btn.IsEnabled) return;
+                btn.Background = BrushAlpha(Red, 0x2A);
+                btn.Foreground = RedBrush;
+            };
+            btn.MouseLeave += (s, e) =>
+            {
+                btn.Background = BrushAlpha(Red, 0x14);
+                btn.Foreground = BrushAlpha(Red, 0xCC);
+            };
+            return btn;
         }
 
         // ── TAB BUTTON ── matches `.tab` (bottom-bordered tab)
@@ -949,12 +998,26 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 Foreground  = active ? TextBrush : Text2Brush;
                 BorderBrush = active ? GoldBrush : Brushes.Transparent;
                 BorderThickness = active ? new Thickness(0, 0, 0, 2) : new Thickness(0);
-                Padding     = new Thickness(0, 5, 0, 5);
+                Padding     = new Thickness(0, 7, 0, 7);
                 FontFamily  = SansFont;
-                FontSize    = 9;
+                FontSize    = 11;
                 FontWeight  = FontWeights.Bold;
                 Cursor      = System.Windows.Input.Cursors.Hand;
                 HorizontalContentAlignment = HorizontalAlignment.Center;
+
+                // v1.5: subtle hover wash on inactive tabs so the
+                // user gets feedback when pointing at them.
+                MouseEnter += (s, e) =>
+                {
+                    if (!IsEnabled) return;
+                    if (BorderBrush != GoldBrush) // i.e. not the active tab
+                        Background = Bg2Brush;
+                };
+                MouseLeave += (s, e) =>
+                {
+                    if (BorderBrush != GoldBrush)
+                        Background = Bg3Brush;
+                };
             }
 
             public void SetActive(bool active)
@@ -991,10 +1054,17 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 canvas.Children.Add(_knob);
                 Child = canvas;
 
+                // Stop propagation so the parent (e.g. an Accordion
+                // header that ALSO listens for MouseLeftButtonUp to
+                // toggle on row-click) doesn't immediately flip our
+                // value back. Previous behaviour: click toggle →
+                // toggle flips → event bubbles → header re-flips →
+                // user sees no change. That was the v1.4 "ON/OFF
+                // toggle doesn't work" bug reported via video 7.
                 MouseLeftButtonUp += (s, e) =>
                 {
                     Set(!_on);
-                    Toggled?.Invoke(_on);
+                    e.Handled = true;
                 };
 
                 Set(initial);
@@ -1019,6 +1089,11 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                     Canvas.SetLeft(_knob, 1);
                     _knob.Fill = Text3Brush;
                 }
+                // Always notify subscribers so external state (e.g.
+                // SSR slot mounting, dependent-field enable state)
+                // tracks the toggle regardless of whether the change
+                // came from a click or a programmatic Set call.
+                Toggled?.Invoke(_on);
             }
         }
 
@@ -1031,10 +1106,26 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             private readonly Border _hdr;
             private readonly TextBlock _name;
             private readonly bool _withTopBorder;
+            // v1.5: when caller supplies a nameColor (Buy Stop=Green,
+            // Sell Stop=Red), preserve it across toggle changes. The
+            // old Apply() unconditionally set _name.Foreground to
+            // TextBrush/Text2Brush which wiped the green/red the
+            // constructor had set, so the labels rendered white.
+            private readonly Brush _nameColorOn;
+            private readonly Brush _nameColorOff;
 
             public Accordion(string name, bool initialOn = false, Brush nameColor = null, bool withTopBorder = true)
             {
                 _withTopBorder = withTopBorder;
+                _nameColorOn   = nameColor ?? TextBrush;
+                // When off, keep the same hue but dim it so the label
+                // visibly reads as inactive. For a custom colored label
+                // we lighten with BrushAlpha(color, 0x66). For the
+                // default text color we use the existing Text2Brush.
+                if (nameColor is SolidColorBrush scb)
+                    _nameColorOff = BrushAlpha(scb.Color, 0x66);
+                else
+                    _nameColorOff = Text2Brush;
 
                 _hdr = new Border
                 {
@@ -1051,9 +1142,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 _name = new TextBlock
                 {
                     Text       = name,
-                    FontSize   = 9,
+                    FontSize   = 11,
                     FontWeight = FontWeights.Bold,
-                    Foreground = nameColor ?? Text2Brush,
+                    Foreground = _nameColorOn,
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 Grid.SetColumn(_name, 0);
@@ -1086,8 +1177,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
             private void Apply()
             {
-                Body.Visibility = Toggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
-                _name.Foreground = Toggle.IsOn ? TextBrush : Text2Brush;
+                Body.Visibility  = Toggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+                _name.Foreground = Toggle.IsOn ? _nameColorOn : _nameColorOff;
             }
         }
 
@@ -1097,10 +1188,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             return new TextBlock
             {
                 Text       = text.ToUpperInvariant(),
-                FontSize   = 9,
+                FontSize   = 11,
                 FontWeight = FontWeights.Bold,
                 Foreground = GoldBrush,
-                Margin     = new Thickness(0, 6, 0, 4)
+                Margin     = new Thickness(0, 7, 0, 5)
             };
         }
 
@@ -1134,6 +1225,46 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 s.Children.Add(c);
             }
             return s;
+        }
+
+        // ── INPUT VALIDATION HELPERS (v1.5) ────────────────────
+        // Both setup views call into these before sending parameters
+        // to the strategy. Invalid fields get a red border + 900ms
+        // flash, and the view refuses to Apply / Activar until the
+        // user corrects them.
+        public static bool ValidateIntRange(TextBox tb, int min, int max, out int parsed)
+        {
+            parsed = 0;
+            if (tb == null) return true;
+            if (!int.TryParse(tb.Text, System.Globalization.NumberStyles.Integer,
+                              System.Globalization.CultureInfo.InvariantCulture, out parsed))
+            {
+                FlashInvalid(tb);
+                return false;
+            }
+            if (parsed < min || parsed > max)
+            {
+                FlashInvalid(tb);
+                return false;
+            }
+            return true;
+        }
+
+        public static void FlashInvalid(TextBox tb)
+        {
+            if (tb == null) return;
+            var orig = tb.BorderBrush;
+            tb.BorderBrush = RedBrush;
+            var t = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(900)
+            };
+            t.Tick += (s, e) =>
+            {
+                if (!tb.IsFocused) tb.BorderBrush = orig;
+                t.Stop();
+            };
+            t.Start();
         }
     }
 }

@@ -1,34 +1,33 @@
 // ============================================================
-//  NY930AddOn — root NTAddOn entry point (v1.4 POC layout)
+//  NY930AddOn — root NTAddOn entry point (v1.5.0)
 // ------------------------------------------------------------
-//  v1.4 changes Option C from the client conversation:
+//  v1.5.0 — replace floating chip + floating window with a
+//  proper chart-toolbar button + column-injected panel.
 //
-//    * No more column injection into the chart's main grid.
-//      That approach was squeezing Chart Trader and the client
-//      reported the layout looked broken.
-//    * Instead, every chart window gets a small NY930 toggle
-//      button overlaid in the top-right corner of its canvas.
-//    * Clicking the toggle opens a floating NTWindow snapped
-//      to the chart's right edge, hosting the existing
-//      NY930ShellView. Clicking again closes it. The chart
-//      and Chart Trader keep their full original layout.
-//    * The Control Center → New → NY930 menu still opens a
-//      standalone window for users who never use the chart
-//      toggle.
+//  Why the change:
+//    * The v1.4 floating chip overlapped Chart Trader and could
+//      disappear when the NT window was maximized.
+//    * The client provided NY930AddOn-toolbar.cs showing the
+//      pattern they wanted: a Button added to chart.MainMenu
+//      that toggles a side panel inserted as a real Grid column
+//      next to MainTabControl, with a GridSplitter for resize.
+//    * Result: panel docks inside the chart layout (like Chart
+//      Trader does), so maximizing or moving the NT window
+//      keeps the panel in place and the panel never overlays
+//      anything.
 //
-//  This POC keeps the UI shell and bridge intact — only the
-//  hosting/anchoring strategy changed.
+//  We still expose NY930 from Control Center → New → NY930 for
+//  users who want a standalone floating window.
 // ============================================================
 
 #region Using declarations
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Documents;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 #endregion
@@ -37,30 +36,34 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 {
     public class NY930AddOn : NinjaTrader.NinjaScript.AddOnBase
     {
-        // Standalone window opened from the Control Center menu.
-        private static NTWindow      _shellWindow;
+        // ── Standalone shell (Control Center → New → NY930) ─────
+        private static NTWindow       _shellWindow;
         private static NY930ShellView _shellView;
 
-        // Per-chart toggle button (a tiny borderless window that
-        // floats in the chart's top-right corner) + per-chart
-        // floating shell panel.
-        //
-        // Why a window instead of a Popup or grid injection:
-        //   - Popup needs the chart to have a valid layout at
-        //     IsOpen=true time. In NT 8.1.6 OnWindowCreated fires
-        //     before the chart is rendered, so the popup positions
-        //     itself off-screen.
-        //   - Grid injection placed the button under the chrome
-        //     because the largest grid is the outer one.
-        //   - A tiny owned Window is rock-solid: explicit screen
-        //     coordinates, follows the chart on move/resize,
-        //     always visible.
-        private static readonly Dictionary<Window, Window>   _chartToggles
-            = new Dictionary<Window, Window>();
-        private static readonly Dictionary<Window, NTWindow> _chartPanels
-            = new Dictionary<Window, NTWindow>();
+        // ── Per-chart hook state ────────────────────────────────
+        // We attach a Button to the chart's MainMenu and, when the
+        // user clicks it, inject a Border (hosting NY930ShellView)
+        // and a GridSplitter into the chart's main Grid right next
+        // to MainTabControl. Clicking again removes them. We hold
+        // refs to everything we added so we can clean up correctly
+        // on close and on chart-destroyed events.
+        private class ChartHook
+        {
+            public Window       Chart;
+            public Button       MenuButton;
+            public object       MenuHost;          // whatever container holds MenuButton (Menu, ToolBar, or custom collection)
+            public Grid         HostGrid;          // chart's main Grid (parent of MainTabControl)
+            public int          MainTabColumn;
+            public int          MainTabRow;
+            public Border       PanelBorder;       // hosts NY930ShellView when open
+            public GridSplitter Splitter;
+            public bool         IsOpen;
+        }
 
-        // Control Center menu item refs.
+        private static readonly Dictionary<Window, ChartHook> _hooks
+            = new Dictionary<Window, ChartHook>();
+
+        // ── Control Center menu refs ────────────────────────────
         private NTMenuItem _addOnMenuItem;
         private NTMenuItem _newMenuRoot;
 
@@ -68,14 +71,26 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         {
             if (State == State.SetDefaults)
             {
-                Description = "NY930 — unified Open Range + Hedge control plane (v1.4 POC).";
+                Description = "NY930 — unified Open Range + Hedge control plane (v1.5).";
                 Name        = "NY930";
             }
             else if (State == State.Active)
             {
                 NY930Settings.EnsureLoaded();
-                NY930Log.PrintSink = msg => System.Diagnostics.Debug.WriteLine(msg);
-                NY930Log.Info("AddOn", "NY930 AddOn active.");
+                // v1.5.0a: log to NinjaScript Output (Print) so the
+                // user can see attach progress, AND mirror to a file
+                // so we can diagnose problems that happen before the
+                // Output window is open.
+                NY930Log.PrintSink = msg =>
+                {
+                    try { Print(msg); } catch { }
+                    AppendToFileLog(msg);
+                };
+                NY930Log.LogSink = (msg, lvl) =>
+                {
+                    try { Log(msg, lvl); } catch { }
+                };
+                NY930Log.Info("AddOn", "NY930 AddOn active (v1.5).");
             }
             else if (State == State.Terminated)
             {
@@ -83,26 +98,22 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             }
         }
 
-        // ── Window lifecycle ─────────────────────────────────────
+        // ── Window detection ────────────────────────────────────
         // ChartWindow is not directly resolvable in NT 8.1.6.x
         // NinjaScript references, so we identify chart windows by
-        // their concrete type name string instead of a typed cast.
-        // We also accept any window whose chrome contains the word
-        // "Chart" in its type name as a fallback in case NT renamed
-        // the type in some build.
+        // their type-name string and use reflection to read the
+        // properties we care about (MainMenu, MainTabControl).
         private static bool IsChartWindow(Window w)
         {
             if (w == null) return false;
             string tn = w.GetType().Name;
             return tn == "ChartWindow"
-                || tn.IndexOf("Chart", StringComparison.OrdinalIgnoreCase) >= 0
-                   && !tn.Equals("ControlCenter", StringComparison.Ordinal);
+                || (tn.IndexOf("Chart", StringComparison.OrdinalIgnoreCase) >= 0
+                    && !tn.Equals("ControlCenter", StringComparison.Ordinal));
         }
 
         protected override void OnWindowCreated(Window window)
         {
-            // Diagnostic: log every window that comes through so we
-            // can see exactly what NT is creating.
             try { NY930Log.Info("AddOn", "OnWindowCreated: " + (window == null ? "null" : window.GetType().FullName)); }
             catch { }
 
@@ -111,8 +122,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
             if (IsChartWindow(window))
             {
-                if (window.IsLoaded) AttachChartToggle(window);
-                else                  window.Loaded += OnChartLoaded;
+                if (window.IsLoaded) AttachChartMenu(window);
+                else                 window.Loaded += OnChartLoaded;
             }
         }
 
@@ -131,24 +142,19 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
                 if (IsChartWindow(window))
                 {
-                    NTWindow panel;
-                    if (_chartPanels.TryGetValue(window, out panel) && panel != null)
+                    ChartHook hook;
+                    if (_hooks.TryGetValue(window, out hook) && hook != null)
                     {
-                        try { panel.Close(); } catch { }
+                        try { ClosePanel(hook); } catch { }
+                        try { RemoveMenuButton(hook); } catch { }
+                        _hooks.Remove(window);
                     }
-                    Window toggleWin;
-                    if (_chartToggles.TryGetValue(window, out toggleWin) && toggleWin != null)
-                    {
-                        try { toggleWin.Close(); } catch { }
-                    }
-                    _chartPanels.Remove(window);
-                    _chartToggles.Remove(window);
                 }
             }
             catch { /* don't crash on shutdown */ }
         }
 
-        // ── Control Center menu ──────────────────────────────────
+        // ── Control Center menu (unchanged from v1.4) ───────────
         private void AttachControlCenterMenu(ControlCenter cc)
         {
             try
@@ -168,7 +174,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             catch (Exception ex) { NY930Log.Warn("AddOn", "AttachControlCenterMenu failed: " + ex.Message); }
         }
 
-        // ── Standalone (menu-launched) shell window ─────────────
         public static void OpenStandaloneShell()
         {
             try
@@ -195,396 +200,365 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             catch (Exception ex) { NY930Log.Error("AddOn", "OpenStandaloneShell error: " + ex.Message); }
         }
 
-        // ── Chart toggle button + floating panel ────────────────
-
+        // ── Chart toolbar button ────────────────────────────────
         private void OnChartLoaded(object sender, RoutedEventArgs e)
         {
             Window ch = sender as Window;
             if (ch == null) return;
             ch.Loaded -= OnChartLoaded;
-            AttachChartToggle(ch);
+            AttachChartMenu(ch);
         }
 
-        private void AttachChartToggle(Window ch)
+        private void AttachChartMenu(Window chart)
         {
-            // Defer the whole creation to after layout finishes.
-            // OnWindowCreated may fire while the chart is still
-            // measuring; PointToScreen / ActualWidth aren't reliable
-            // until then. DispatcherPriority.Background runs after
-            // the current layout pass.
+            // Defer to Background priority so the chart's chrome
+            // (including MainMenu and MainTabControl) is fully
+            // realized before we try to touch it.
             Action work = () =>
             {
                 try
                 {
-                    if (_chartToggles.ContainsKey(ch)) return;
+                    if (_hooks.ContainsKey(chart)) return;
 
-                    // Chip lives in a 140×46 transparent window. The
-                    // visible badge inside is ~120×34, leaving glow
-                    // room for the hover drop-shadow without clipping.
-                    // Position: nudged ~210px in from the right edge
-                    // so we clear the price-axis gutter (~60-80px) and
-                    // the chart's window-chrome buttons. Y=46 puts the
-                    // chip just under the chart title bar.
-                    const double TogWinW = 140;
-                    const double TogWinH = 46;
-                    const double TogOffX = 210; // px from chart right edge
-                    const double TogOffY = 46;  // px from chart top edge
+                    // Resolve a host for the button. NT 8 chart windows
+                    // expose MainMenu, but the property type / layout
+                    // differs between builds — sometimes Menu, sometimes
+                    // a custom collection. We try several strategies:
+                    //   1. MainMenu reachable & has Items collection
+                    //      (Menu / MenuBase / ItemsControl)
+                    //   2. MainMenu has a public Add(object) method
+                    //      (custom collection, matches client's
+                    //      reference NY930AddOn-toolbar.cs)
+                    //   3. Fallback: walk the chart's visual tree for
+                    //      the first ToolBar or Menu and add to its
+                    //      Items.
+                    var btn = BuildMenuButton();
+                    object hostObj = null;
+                    string hostDesc = null;
 
-                    Point screenPt = new Point(100, 100);
-                    try
+                    var menu = GetReflectedProperty(chart, "MainMenu");
+                    NY930Log.Info("AddOn", "MainMenu reflected = "
+                        + (menu == null ? "null" : menu.GetType().FullName));
+
+                    if (menu is ItemsControl ic)
                     {
-                        if (ch.IsLoaded && ch.ActualWidth > 0)
-                            screenPt = ch.PointToScreen(new Point(ch.ActualWidth - TogOffX, TogOffY));
-                        else if (!double.IsNaN(ch.Left))
-                            screenPt = new Point(ch.Left + Math.Max(220, ch.Width) - TogOffX, ch.Top + TogOffY);
+                        ic.Items.Add(btn);
+                        hostObj  = ic;
+                        hostDesc = "MainMenu (ItemsControl)";
                     }
-                    catch { /* keep default */ }
-
-                    var btn = BuildToggleButton();
-                    btn.Click += (s, e) => ToggleChartPanel(ch);
-
-                    var btnWin = new Window
+                    else if (menu != null && TryInvokeAdd(menu, btn))
                     {
-                        Width                 = TogWinW,
-                        Height                = TogWinH,
-                        WindowStyle           = WindowStyle.None,
-                        ResizeMode            = ResizeMode.NoResize,
-                        AllowsTransparency    = true,
-                        Background            = Brushes.Transparent,
-                        ShowInTaskbar         = false,
-                        Topmost               = true,    // stay above chart chrome
-                        ShowActivated         = false,
-                        Owner                 = ch,
-                        Content               = btn,
-                        WindowStartupLocation = WindowStartupLocation.Manual,
-                        Left                  = screenPt.X,
-                        Top                   = screenPt.Y
-                    };
-                    btnWin.Show();
-                    NY930Log.Info("AddOn", "NY930 toggle window shown at "
-                        + screenPt.X.ToString("F0") + "," + screenPt.Y.ToString("F0"));
-
-                    // Reposition on chart move/resize.
-                    Action reposition = () =>
+                        hostObj  = menu;
+                        hostDesc = "MainMenu (.Add via reflection)";
+                    }
+                    else
                     {
-                        try
+                        // Fallback: visual tree walk.
+                        var hostFound = FindMenuOrToolBar(chart);
+                        if (hostFound != null)
                         {
-                            if (!ch.IsLoaded || ch.ActualWidth <= 0) return;
-                            Point pt = ch.PointToScreen(new Point(ch.ActualWidth - TogOffX, TogOffY));
-                            btnWin.Left = pt.X;
-                            btnWin.Top  = pt.Y;
+                            hostFound.Items.Add(btn);
+                            hostObj  = hostFound;
+                            hostDesc = "visual-tree " + hostFound.GetType().Name;
                         }
-                        catch { }
-                    };
-                    ch.LocationChanged += (s, e) => reposition();
-                    ch.SizeChanged     += (s, e) => reposition();
-                    ch.IsVisibleChanged += (s, e) =>
-                    {
-                        btnWin.Visibility = ch.IsVisible ? Visibility.Visible : Visibility.Collapsed;
-                        if (ch.IsVisible) reposition();
-                    };
+                    }
 
-                    _chartToggles[ch] = btnWin;
-                    _chartPanels[ch]  = null;
-                    NY930Log.Info("AddOn", "NY930 toggle attached to chart.");
+                    if (hostObj == null)
+                    {
+                        NY930Log.Warn("AddOn", "No menu/toolbar host found — toolbar button not attached.");
+                        return;
+                    }
+
+                    var mainTabControl = GetReflectedProperty(chart, "MainTabControl") as FrameworkElement;
+                    Grid hostGrid = mainTabControl != null ? mainTabControl.Parent as Grid : null;
+                    if (hostGrid == null)
+                    {
+                        NY930Log.Warn("AddOn", "Chart MainTabControl parent grid not found — panel insertion will not work.");
+                        // We still keep the button — clicking it will log
+                        // an error rather than crash.
+                    }
+
+                    var hook = new ChartHook
+                    {
+                        Chart         = chart,
+                        MenuButton    = btn,
+                        MenuHost      = hostObj,
+                        HostGrid      = hostGrid,
+                        MainTabColumn = mainTabControl != null ? Grid.GetColumn(mainTabControl) : 0,
+                        MainTabRow    = mainTabControl != null ? Grid.GetRow(mainTabControl)    : 0,
+                        IsOpen        = false
+                    };
+                    btn.Click += (s, e) => TogglePanel(hook);
+
+                    _hooks[chart] = hook;
+                    NY930Log.Info("AddOn", "NY930 toolbar button attached to " + hostDesc + ".");
                 }
                 catch (Exception ex)
                 {
-                    NY930Log.Warn("AddOn", "AttachChartToggle failed: " + ex.Message);
+                    NY930Log.Warn("AddOn", "AttachChartMenu failed: " + ex.Message);
                 }
             };
 
-            // If the chart is already loaded, defer to Background
-            // priority so layout finishes first; otherwise wait for
-            // Loaded then defer the same way.
-            if (ch.IsLoaded)
-            {
-                ch.Dispatcher.BeginInvoke(work,
-                    System.Windows.Threading.DispatcherPriority.Background);
-            }
+            if (chart.IsLoaded)
+                chart.Dispatcher.BeginInvoke(work, System.Windows.Threading.DispatcherPriority.Background);
             else
             {
                 RoutedEventHandler handler = null;
                 handler = (s, e) =>
                 {
-                    ch.Loaded -= handler;
-                    ch.Dispatcher.BeginInvoke(work,
-                        System.Windows.Threading.DispatcherPriority.Background);
+                    chart.Loaded -= handler;
+                    chart.Dispatcher.BeginInvoke(work, System.Windows.Threading.DispatcherPriority.Background);
                 };
-                ch.Loaded += handler;
+                chart.Loaded += handler;
             }
         }
 
-        // The branded badge that floats over the chart's top-right
-        // corner and shows / hides the NY930 panel. Designed to read
-        // as a product chip, not a debug button:
-        //   • NY (silver gradient) + 930 (gold gradient) wordmark
-        //     same stops as the home logo
-        //   • Subtle dark vertical sheen background
-        //   • Diagonal gold gradient border, gently rounded corners
-        //   • Soft ambient gold glow at rest, brighter on hover
-        //   • Tiny "MENU" caption + chevron so the user can tell at
-        //     a glance that it's a clickable toggle
-        private static Button BuildToggleButton()
+        // ── Reflection helpers ──────────────────────────────────
+        private static object GetReflectedProperty(object obj, string name)
         {
-            // ── Brushes (frozen) ────────────────────────────────
-            var silver = new LinearGradientBrush(
-                new GradientStopCollection
-                {
-                    new GradientStop(Colors.White,                 0.10),
-                    new GradientStop(Color.FromRgb(216, 226, 239), 0.45),
-                    new GradientStop(Color.FromRgb(176, 187, 204), 1.00),
-                },
-                new Point(0, 0), new Point(0, 1));
-            silver.Freeze();
-
-            var gold = new LinearGradientBrush(
-                new GradientStopCollection
-                {
-                    new GradientStop(Color.FromRgb(245, 210, 114), 0.0),
-                    new GradientStop(NY930Theme.GoldLight,         0.35),
-                    new GradientStop(NY930Theme.Gold,              0.65),
-                    new GradientStop(NY930Theme.GoldDark,          1.0),
-                },
-                new Point(0, 0), new Point(0, 1));
-            gold.Freeze();
-
-            var bgGrad = new LinearGradientBrush(
-                new GradientStopCollection
-                {
-                    new GradientStop(Color.FromRgb(0x2c, 0x2c, 0x2c), 0.0),
-                    new GradientStop(Color.FromRgb(0x16, 0x16, 0x16), 0.55),
-                    new GradientStop(Color.FromRgb(0x08, 0x08, 0x08), 1.0),
-                },
-                new Point(0, 0), new Point(0, 1));
-            bgGrad.Freeze();
-
-            var borderRest = new LinearGradientBrush(
-                new GradientStopCollection
-                {
-                    new GradientStop(NY930Theme.GoldLight, 0.0),
-                    new GradientStop(NY930Theme.Gold,      0.5),
-                    new GradientStop(NY930Theme.GoldDark,  1.0),
-                },
-                new Point(0, 0), new Point(1, 1));
-            borderRest.Freeze();
-
-            var borderHover = new LinearGradientBrush(
-                new GradientStopCollection
-                {
-                    new GradientStop(Colors.White,         0.0),
-                    new GradientStop(NY930Theme.GoldLight, 0.5),
-                    new GradientStop(NY930Theme.Gold,      1.0),
-                },
-                new Point(0, 0), new Point(1, 1));
-            borderHover.Freeze();
-
-            // ── Wordmark (NY silver + 930 gold) ─────────────────
-            var wordmark = new TextBlock
-            {
-                FontFamily          = NY930Theme.MonoFont,
-                FontSize            = 17,
-                FontWeight          = FontWeights.Black,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment   = VerticalAlignment.Center,
-                SnapsToDevicePixels = true,
-                LineHeight          = 17,
-                Margin              = new Thickness(0, 1, 0, 0)
-            };
-            wordmark.Inlines.Add(new Run("NY")  { Foreground = silver });
-            wordmark.Inlines.Add(new Run("930") { Foreground = gold });
-
-            // Tiny chevron to hint at "click to expand panel".
-            var chevron = new TextBlock
-            {
-                Text                = "›",
-                FontFamily          = NY930Theme.SansFont,
-                FontSize            = 14,
-                FontWeight          = FontWeights.Bold,
-                Foreground          = NY930Theme.GoldBrush,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Margin              = new Thickness(2, 0, 6, 1)
-            };
-
-            // Inner row: wordmark on the left, chevron on the right.
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            Grid.SetColumn(wordmark, 0);
-            Grid.SetColumn(chevron,  1);
-            row.Children.Add(wordmark);
-            row.Children.Add(chevron);
-
-            // Hairline gold accent under the wordmark so the chip
-            // reads as a brand badge rather than a plain button.
-            var accent = new Border
-            {
-                Height          = 1,
-                Background      = gold,
-                Margin          = new Thickness(10, 0, 10, 4),
-                Opacity         = 0.55,
-                VerticalAlignment = VerticalAlignment.Bottom
-            };
-
-            var content = new Grid();
-            content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            Grid.SetRow(row,    0);
-            Grid.SetRow(accent, 1);
-            content.Children.Add(row);
-            content.Children.Add(accent);
-
-            // Resting glow — visible at all times so the chip pops
-            // off the chart canvas.
-            var restGlow = new DropShadowEffect
-            {
-                Color       = NY930Theme.Gold,
-                BlurRadius  = 7,
-                ShadowDepth = 0,
-                Opacity     = 0.35
-            };
-            restGlow.Freeze();
-
-            var hoverGlow = new DropShadowEffect
-            {
-                Color       = NY930Theme.GoldLight,
-                BlurRadius  = 12,
-                ShadowDepth = 0,
-                Opacity     = 0.75
-            };
-            hoverGlow.Freeze();
-
-            var chip = new Border
-            {
-                CornerRadius        = new CornerRadius(5),
-                Background          = bgGrad,
-                BorderBrush         = borderRest,
-                BorderThickness     = new Thickness(1),
-                SnapsToDevicePixels = true,
-                Child               = content,
-                Effect              = restGlow
-            };
-
-            // Strip the default WPF Button chrome so only the chip
-            // visual is rendered (no blue hover overlay etc.).
-            var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-            presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
-            presenter.SetValue(ContentPresenter.VerticalAlignmentProperty,   VerticalAlignment.Stretch);
-            var template = new ControlTemplate(typeof(Button)) { VisualTree = presenter };
-
-            var btn = new Button
-            {
-                Width               = 120,
-                Height              = 34,
-                Background          = Brushes.Transparent,
-                BorderBrush         = Brushes.Transparent,
-                BorderThickness     = new Thickness(0),
-                Padding             = new Thickness(0),
-                Margin              = new Thickness(0, 6, 10, 6),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment   = VerticalAlignment.Center,
-                Cursor              = System.Windows.Input.Cursors.Hand,
-                FocusVisualStyle    = null,
-                ToolTip             = "Mostrar / ocultar NY930",
-                Content             = chip,
-                Template            = template
-            };
-
-            // Hover: brighter border + bigger glow.
-            btn.MouseEnter += (s, e) =>
-            {
-                chip.BorderBrush = borderHover;
-                chip.Effect      = hoverGlow;
-                accent.Opacity   = 0.95;
-            };
-            btn.MouseLeave += (s, e) =>
-            {
-                chip.BorderBrush = borderRest;
-                chip.Effect      = restGlow;
-                accent.Opacity   = 0.55;
-            };
-
-            return btn;
+            if (obj == null) return null;
+            var pi = obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            return pi != null ? pi.GetValue(obj) : null;
         }
 
-        private void ToggleChartPanel(Window ch)
+        // Tries to call collection.Add(item) via reflection. Used as
+        // a fallback when MainMenu isn't a standard ItemsControl
+        // (the client's reference code called chart.MainMenu.Add()
+        // directly on what may be a custom collection type).
+        private static bool TryInvokeAdd(object collection, object item)
         {
+            if (collection == null || item == null) return false;
             try
             {
-                NTWindow existing;
-                if (_chartPanels.TryGetValue(ch, out existing) && existing != null)
-                {
-                    existing.Close();
-                    _chartPanels[ch] = null;
-                    return;
-                }
-
-                // Create floating panel snapped to the chart's right edge.
-                var win = new NTWindow
-                {
-                    Title         = "NY930",
-                    Width         = 290,
-                    Height        = Math.Max(520, ch.ActualHeight - 80),
-                    Background    = NY930Theme.BgBrush,
-                    Owner         = ch,
-                    ShowInTaskbar = false
-                };
-                win.Content = new NY930ShellView();
-                win.Closed += (s, e) =>
-                {
-                    var content = win.Content as IDisposable;
-                    if (content != null) content.Dispose();
-                    if (_chartPanels.ContainsKey(ch)) _chartPanels[ch] = null;
-                };
-
-                // Snap to the right edge of the chart, top-aligned.
-                try
-                {
-                    Point screenTopRight = ch.PointToScreen(new Point(ch.ActualWidth, 0));
-                    win.WindowStartupLocation = WindowStartupLocation.Manual;
-                    win.Left = screenTopRight.X + 6;
-                    win.Top  = screenTopRight.Y + 40;
-                }
-                catch
-                {
-                    win.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-                }
-
-                win.Show();
-                _chartPanels[ch] = win;
+                var add = collection.GetType().GetMethod("Add",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    null, new[] { typeof(object) }, null);
+                if (add == null)
+                    add = collection.GetType().GetMethod("Add",
+                        BindingFlags.Public | BindingFlags.Instance,
+                        null, new[] { item.GetType() }, null);
+                if (add == null) return false;
+                add.Invoke(collection, new object[] { item });
+                return true;
             }
             catch (Exception ex)
             {
-                NY930Log.Error("AddOn", "ToggleChartPanel error: " + ex.Message);
+                NY930Log.Warn("AddOn", "TryInvokeAdd failed: " + ex.Message);
+                return false;
             }
         }
 
-        // Walk the chart's visual tree, return the largest Grid
-        // we find. Used as the host for the floating toggle button.
-        private static Grid FindMainChartGrid(DependencyObject root)
+        // Visual-tree walk: return the first Menu / ToolBar /
+        // ItemsControl that looks like the chart's top toolbar.
+        // We prefer Menu first, then ToolBar, then any ItemsControl
+        // that has at least one Button or MenuItem already in it
+        // (so we don't accidentally inject into an unrelated list).
+        private static ItemsControl FindMenuOrToolBar(DependencyObject root)
         {
             if (root == null) return null;
-            Grid best = null;
-            int bestArea = 0;
-
+            ItemsControl menuMatch = null;
+            ItemsControl toolBarMatch = null;
+            ItemsControl genericMatch = null;
             var queue = new Queue<DependencyObject>();
             queue.Enqueue(root);
-            int budget = 400;
-
+            int budget = 600;
             while (queue.Count > 0 && budget-- > 0)
             {
                 var node = queue.Dequeue();
-                Grid g = node as Grid;
-                if (g != null)
+                if (node is Menu m && menuMatch == null) menuMatch = m;
+                else if (node is ToolBar tb && toolBarMatch == null) toolBarMatch = tb;
+                else if (node is ItemsControl ic && genericMatch == null
+                         && ic.Items.Count > 0
+                         && ic.GetType().Name.IndexOf("Combo", StringComparison.OrdinalIgnoreCase) < 0
+                         && ic.GetType().Name.IndexOf("Tab",   StringComparison.OrdinalIgnoreCase) < 0
+                         && ic.GetType().Name.IndexOf("List",  StringComparison.OrdinalIgnoreCase) < 0)
                 {
-                    int area = g.ColumnDefinitions.Count * Math.Max(1, g.RowDefinitions.Count);
-                    if (area > bestArea) { bestArea = area; best = g; }
+                    genericMatch = ic;
                 }
                 int n = VisualTreeHelper.GetChildrenCount(node);
                 for (int i = 0; i < n; i++)
                     queue.Enqueue(VisualTreeHelper.GetChild(node, i));
             }
-            return best;
+            return menuMatch ?? toolBarMatch ?? genericMatch;
+        }
+
+        // Append to ${USERPROFILE}\Documents\NinjaTrader 8\log\NY930-AddOn.log
+        // so we can read attach progress even if the Output window
+        // wasn't open at the time. Best-effort only — never throws.
+        private static readonly object _fileLogLock = new object();
+        private static void AppendToFileLog(string msg)
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    "NinjaTrader 8", "log");
+                if (!System.IO.Directory.Exists(dir))
+                    System.IO.Directory.CreateDirectory(dir);
+                string path = System.IO.Path.Combine(dir, "NY930-AddOn.log");
+                lock (_fileLogLock)
+                {
+                    System.IO.File.AppendAllText(path,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ")
+                        + msg + Environment.NewLine);
+                }
+            }
+            catch { /* ignore */ }
+        }
+
+        // The chart-toolbar button. Visually we let NinjaTrader's
+        // own ButtonBackgroundBrush etc resources style it so it
+        // blends with the other built-in toolbar buttons (Save
+        // Workspace, etc.). The label and tooltip are localized.
+        private static Button BuildMenuButton()
+        {
+            var btn = new Button
+            {
+                Content    = "NY930",
+                ToolTip    = "Mostrar / Ocultar NY930",
+                Padding    = new Thickness(8, 2, 8, 2),
+                Margin     = new Thickness(2, 0, 2, 0),
+                FontSize   = 12,
+                FontWeight = FontWeights.Bold,
+                Foreground = NY930Theme.GoldBrush,
+                Cursor     = System.Windows.Input.Cursors.Hand
+            };
+
+            // Pick up NT's standard button chrome if available so
+            // the button doesn't look out of place next to the
+            // built-in toolbar buttons.
+            var bg = Application.Current.TryFindResource("ButtonBackgroundBrush") as Brush;
+            var bd = Application.Current.TryFindResource("ButtonBorderBrush")     as Brush;
+            if (bg != null) btn.Background      = bg;
+            if (bd != null) btn.BorderBrush     = bd;
+            btn.BorderThickness = new Thickness(1);
+
+            return btn;
+        }
+
+        // ── Toggle panel: open / close ──────────────────────────
+        private void TogglePanel(ChartHook hook)
+        {
+            try
+            {
+                if (hook.IsOpen) ClosePanel(hook);
+                else             OpenPanel(hook);
+            }
+            catch (Exception ex)
+            {
+                NY930Log.Error("AddOn", "TogglePanel error: " + ex.Message);
+            }
+        }
+
+        // Inject a 290px-wide column to the right of MainTabControl
+        // and place an NY930ShellView (wrapped in a Border) plus a
+        // GridSplitter into it. Existing siblings whose column index
+        // is greater than MainTabControl's get shifted by +1 so they
+        // stay in their original visual slots.
+        private void OpenPanel(ChartHook hook)
+        {
+            if (hook == null || hook.HostGrid == null || hook.IsOpen) return;
+
+            Grid grid = hook.HostGrid;
+            int  col  = hook.MainTabColumn;
+            int  row  = hook.MainTabRow;
+
+            grid.ColumnDefinitions.Insert(col + 1, new ColumnDefinition
+            {
+                Width    = new GridLength(290, GridUnitType.Pixel),
+                MinWidth = 240,
+                MaxWidth = 520
+            });
+
+            // Shift siblings to keep their visual position.
+            foreach (UIElement child in grid.Children)
+            {
+                int c = Grid.GetColumn(child);
+                if (c > col) Grid.SetColumn(child, c + 1);
+            }
+
+            var border = new Border
+            {
+                Background      = NY930Theme.BgBrush,
+                BorderBrush     = NY930Theme.BorderBrush,
+                BorderThickness = new Thickness(1, 0, 0, 0),
+                Child           = new NY930ShellView()
+            };
+            Grid.SetColumn(border, col + 1);
+            Grid.SetRow(border, row);
+            grid.Children.Add(border);
+
+            var splitter = new GridSplitter
+            {
+                Width               = 5,
+                Background          = NY930Theme.BorderBrush,
+                ResizeBehavior      = GridResizeBehavior.PreviousAndCurrent,
+                ResizeDirection     = GridResizeDirection.Columns,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment   = VerticalAlignment.Stretch
+            };
+            Grid.SetColumn(splitter, col + 1);
+            Grid.SetRow(splitter, row);
+            grid.Children.Add(splitter);
+
+            hook.PanelBorder = border;
+            hook.Splitter    = splitter;
+            hook.IsOpen      = true;
+        }
+
+        private void ClosePanel(ChartHook hook)
+        {
+            if (hook == null || !hook.IsOpen) return;
+
+            Grid grid     = hook.HostGrid;
+            int  panelCol = hook.PanelBorder != null ? Grid.GetColumn(hook.PanelBorder) : hook.MainTabColumn + 1;
+
+            if (hook.PanelBorder != null)
+            {
+                var disposable = hook.PanelBorder.Child as IDisposable;
+                if (disposable != null) { try { disposable.Dispose(); } catch { } }
+                grid.Children.Remove(hook.PanelBorder);
+            }
+            if (hook.Splitter != null) grid.Children.Remove(hook.Splitter);
+
+            if (panelCol >= 0 && panelCol < grid.ColumnDefinitions.Count)
+                grid.ColumnDefinitions.RemoveAt(panelCol);
+
+            foreach (UIElement child in grid.Children)
+            {
+                int c = Grid.GetColumn(child);
+                if (c > panelCol) Grid.SetColumn(child, c - 1);
+            }
+
+            hook.PanelBorder = null;
+            hook.Splitter    = null;
+            hook.IsOpen      = false;
+        }
+
+        private static void RemoveMenuButton(ChartHook hook)
+        {
+            if (hook == null || hook.MenuButton == null) return;
+            try
+            {
+                if (hook.MenuHost is ItemsControl ic && ic.Items.Contains(hook.MenuButton))
+                {
+                    ic.Items.Remove(hook.MenuButton);
+                    return;
+                }
+                if (hook.MenuHost != null)
+                {
+                    // Try Remove(item) via reflection (mirror of TryInvokeAdd).
+                    var rem = hook.MenuHost.GetType().GetMethod("Remove",
+                        BindingFlags.Public | BindingFlags.Instance,
+                        null, new[] { typeof(object) }, null);
+                    if (rem == null)
+                        rem = hook.MenuHost.GetType().GetMethod("Remove",
+                            BindingFlags.Public | BindingFlags.Instance,
+                            null, new[] { hook.MenuButton.GetType() }, null);
+                    if (rem != null) rem.Invoke(hook.MenuHost, new object[] { hook.MenuButton });
+                }
+            }
+            catch { /* shutdown — ignore */ }
         }
     }
 }

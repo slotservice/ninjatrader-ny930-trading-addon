@@ -243,11 +243,21 @@ namespace NinjaTrader.NinjaScript.Strategies
                 IsExitOnSessionCloseStrategy = true;
                 BarsRequiredToTrade          = 0;
             }
-            else if (State == State.Realtime)
+            else if (State == State.DataLoaded)
             {
+                // v1.5 fix: Register the strategy with the Bridge as
+                // soon as data loads, NOT when State.Realtime fires.
+                // State.Realtime only triggers when new live ticks
+                // arrive — if the market is closed, Realtime never
+                // fires and the UI thinks the strategy isn't
+                // attached. See same fix in Hedge.cs.
                 NY930Log.PrintSink = msg => Print(msg);
                 NY930Log.LogSink   = (msg, lvl) => Log(msg, lvl);
                 NY930Bridge.RegisterOpenRange();
+                NY930Log.Info(SRC, "Open Range strategy attached (DataLoaded).");
+            }
+            else if (State == State.Realtime)
+            {
 
                 if (EnablePartials)
                 {

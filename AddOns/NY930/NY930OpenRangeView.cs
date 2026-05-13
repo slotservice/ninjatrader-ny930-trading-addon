@@ -252,6 +252,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _btnManualActivate.HorizontalAlignment = HorizontalAlignment.Stretch;
             _btnManualActivate.Click += (s, e) =>
             {
+                if (!ValidateInputs()) return;
+                if (!RequireOpenRangeAttached()) return;
                 ApplyParametersToStrategy();
                 NY930Bridge.RequestOpenRangeAction(new NY930Action { Type = NY930ActionType.OpenRangeBuyNow });
             };
@@ -459,7 +461,12 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             // Single-Stop Reverse — created lazily, mounted into
             // whichever side is solo.
             _ssrToggle = new NY930Theme.ToggleSwitch();
-            _ssrTicks  = NY930Theme.FInput("50");
+            // Default to 0 = "auto" (use the selected stop ticks). The
+            // strategy interprets 0 as auto-fallback to TicksLong /
+            // TicksShort per video 7. User can override with any
+            // positive value.
+            _ssrTicks  = NY930Theme.FInput("0");
+            _ssrTicks.ToolTip = "0 = mismo número de ticks que la orden Stop seleccionada";
 
             return s;
         }
@@ -699,6 +706,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _btnApply = NY930Theme.ApplyButton("▶ Aplicar cambios");
             _btnApply.Click += (s, e) =>
             {
+                if (!ValidateInputs()) return;
                 ApplyParametersToStrategy();
                 FlashApply();
             };
@@ -730,6 +738,8 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // ── Activar / Desactivar Horario ───────────────────────
         private void ActivarHorario()
         {
+            if (!ValidateInputs()) return;
+            if (!RequireOpenRangeAttached()) return;
             ApplyParametersToStrategy();
 
             int hh = ParseInt(_hh.Text) ?? 9;
@@ -748,6 +758,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
             _scheduleForm.Visibility      = Visibility.Collapsed;
             _scheduleCountdown.Visibility = Visibility.Visible;
+            // Per client video 8: once Horario is armed, the Manual
+            // tab is no longer a valid entry path — disable it until
+            // the user presses STOP or the strategy resets.
+            SetManualTabEnabled(false);
             RefreshCountdown();
         }
 
@@ -758,6 +772,17 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _scheduleCountdown.Visibility = Visibility.Collapsed;
             _countdownTb.Text = "00:00:00";
             _countdownTb.Foreground = NY930Theme.GoldLightBrush;
+            SetManualTabEnabled(true);
+        }
+
+        private void SetManualTabEnabled(bool enabled)
+        {
+            if (_tabManual == null) return;
+            _tabManual.IsEnabled = enabled;
+            _tabManual.Opacity   = enabled ? 1.0 : 0.4;
+            _tabManual.Cursor    = enabled
+                ? System.Windows.Input.Cursors.Hand
+                : System.Windows.Input.Cursors.Arrow;
         }
 
         private void RefreshCountdown()
@@ -775,6 +800,83 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 (int)rem.TotalHours, rem.Minutes, rem.Seconds);
             _countdownTb.Foreground = rem.TotalSeconds <= 60
                 ? NY930Theme.RedBrush : NY930Theme.GoldLightBrush;
+        }
+
+        // ── Input validation (v1.5) ────────────────────────────
+        // Returns true if all fields pass their min/max + cross rules.
+        // Bad fields get a red border flash. Caller refuses to Apply
+        // / Activar when this returns false.
+        private bool ValidateInputs()
+        {
+            int v;
+            bool ok = true;
+            // Time: HH 1-12, MM 0-59, SS 0-59
+            if (!NY930Theme.ValidateIntRange(_hh, 1, 12, out v)) ok = false;
+            if (!NY930Theme.ValidateIntRange(_hm, 0, 59, out v)) ok = false;
+            if (!NY930Theme.ValidateIntRange(_hs, 0, 59, out v)) ok = false;
+            // Contratos >= 1
+            int totalQty = 0;
+            if (!NY930Theme.ValidateIntRange(_cfgQty, 1, int.MaxValue, out totalQty)) ok = false;
+
+            // Per-side fields only when that side is enabled.
+            if (_accLong != null && _accLong.IsOn)
+            {
+                if (!NY930Theme.ValidateIntRange(_longTicks, 1, int.MaxValue, out v)) ok = false;
+                if (!NY930Theme.ValidateIntRange(_longSl,    1, int.MaxValue, out v)) ok = false;
+                if (!NY930Theme.ValidateIntRange(_longTp,    1, int.MaxValue, out v)) ok = false;
+            }
+            if (_accShort != null && _accShort.IsOn)
+            {
+                if (!NY930Theme.ValidateIntRange(_shortTicks, 1, int.MaxValue, out v)) ok = false;
+                if (!NY930Theme.ValidateIntRange(_shortSl,    1, int.MaxValue, out v)) ok = false;
+                if (!NY930Theme.ValidateIntRange(_shortTp,    1, int.MaxValue, out v)) ok = false;
+            }
+            // SSR ticks: >= 0 (0 = auto)
+            if (_ssrTicks != null && _ssrToggle != null && _ssrToggle.IsOn)
+            {
+                if (!NY930Theme.ValidateIntRange(_ssrTicks, 0, int.MaxValue, out v)) ok = false;
+            }
+
+            // Partials cross-rule: P1+P2 contracts <= total, P2 ticks > P1 ticks.
+            if (_accPar != null && _accPar.IsOn)
+            {
+                int p1t, p1q, p2t, p2q;
+                bool p1tOk = NY930Theme.ValidateIntRange(_p1Ticks, 0, int.MaxValue, out p1t);
+                bool p1qOk = NY930Theme.ValidateIntRange(_p1Qty,   0, int.MaxValue, out p1q);
+                bool p2tOk = NY930Theme.ValidateIntRange(_p2Ticks, 0, int.MaxValue, out p2t);
+                bool p2qOk = NY930Theme.ValidateIntRange(_p2Qty,   0, int.MaxValue, out p2q);
+                if (!p1tOk || !p1qOk || !p2tOk || !p2qOk) ok = false;
+                if (p1qOk && p2qOk && totalQty > 0 && (p1q + p2q) > totalQty)
+                {
+                    NY930Theme.FlashInvalid(_p1Qty);
+                    NY930Theme.FlashInvalid(_p2Qty);
+                    ok = false;
+                }
+                if (p1tOk && p2tOk && p2t > 0 && p2t <= p1t)
+                {
+                    NY930Theme.FlashInvalid(_p2Ticks);
+                    ok = false;
+                }
+            }
+            return ok;
+        }
+
+        // Returns false (and shows a clear dialog) if the AperturaBreakout
+        // strategy is not currently attached + enabled on any chart.
+        // Used as a guard before any action that would queue an order:
+        // ACTIVAR (Horario), ACTIVAR ÓRDENES (Manual).
+        private static bool RequireOpenRangeAttached()
+        {
+            if (NY930Bridge.OpenRangeAttached) return true;
+            MessageBox.Show(
+                "La estrategia 'AperturaBreakout' no está activa en ningún gráfico.\n\n" +
+                "Para que NY930 coloque las órdenes Buy Stop / Sell Stop, primero adjunte la estrategia:\n\n" +
+                "1. Clic derecho en el gráfico → Strategies\n" +
+                "2. Seleccione 'AperturaBreakout' en la lista\n" +
+                "3. Configure parámetros y haga clic en Enable",
+                "NY930 — Estrategia no adjunta",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
         }
 
         // ── Apply parameters to strategy ───────────────────────

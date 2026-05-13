@@ -1,11 +1,14 @@
 // ============================================================
-//  NY930HedgeView — v1.3 pixel-match
-//  Reference: ny930-buy_or_sell-panel.html
+//  NY930HedgeView — v1.5 (no Precio tab)
+//  Reference: ny930-buy_or_sell-panel.html (5/13 client update)
 // ------------------------------------------------------------
 //  Same shape as the Open Range setup view, plus:
 //    - BUY / or / SELL row at top to pick the side.
-//    - Three top tabs instead of two: Horario | Precio | Manual.
-//      * Precio tab is new (price-triggered entry).
+//    - Two top tabs: Horario | Manual.
+//      * v1.5 dropped the Precio (price-trigger) tab per client
+//        request. Strategy keeps the EntryPrice field as a no-op
+//        for backwards compatibility but the UI no longer offers
+//        it.
 //    - Estándar config has just SL/TP/Contratos (no Long/Short
 //      accordions).
 //    - No Single-Stop Reverse.
@@ -35,9 +38,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private Button _btnBuy, _btnSell;
         private string _selectedSide = "none"; // "buy" | "sell" | "none"
 
-        // Tabs
-        private NY930Theme.TabButton _tabHorario, _tabPrecio, _tabManual;
-        private StackPanel _panelHorario, _panelPrecio, _panelManual;
+        // Tabs (Horario | Manual — Precio removed in v1.5)
+        private NY930Theme.TabButton _tabHorario, _tabManual;
+        private StackPanel _panelHorario, _panelManual;
 
         // Sub-tabs
         private NY930Theme.TabButton _stabEst, _stabAvz;
@@ -50,13 +53,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private StackPanel _scheduleForm, _scheduleCountdown;
         private TextBlock _countdownTb;
         private Button   _btnStopH;
-
-        // Precio
-        private TextBox _priceInput;
-        private Button  _btnActivarP;
-        private StackPanel _precioForm, _precioActive;
-        private TextBlock _precioActiveTb;
-        private Button   _btnStopP;
 
         // Manual
         private Button _btnManualActivate;
@@ -212,8 +208,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 BorderThickness = new Thickness(1),
                 Foreground = NY930Theme.Text2Brush,
                 FontFamily = NY930Theme.MonoFont,
-                FontSize = 9, FontWeight = FontWeights.Bold,
-                Padding = new Thickness(0, 7, 0, 7),
+                // v1.5 typography: 9px was too small vs Chart Trader
+                // — matched to the other v1.5 button sizes.
+                FontSize = 12, FontWeight = FontWeights.Bold,
+                Padding = new Thickness(0, 8, 0, 8),
                 Cursor = System.Windows.Input.Cursors.Hand,
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
@@ -293,7 +291,7 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             return grid;
         }
 
-        // ── 3-tab row: Horario | Precio | Manual ──────────────
+        // ── 2-tab row: Horario | Manual ──────────────
         private FrameworkElement BuildTabs()
         {
             var border = new Border
@@ -306,20 +304,15 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition());
             grid.ColumnDefinitions.Add(new ColumnDefinition());
-            grid.ColumnDefinitions.Add(new ColumnDefinition());
 
             _tabHorario = new NY930Theme.TabButton("Horario", true);
-            _tabPrecio  = new NY930Theme.TabButton("Precio",  false);
             _tabManual  = new NY930Theme.TabButton("Manual",  false);
             _tabHorario.Click += (s, e) => SetActiveTab(0);
-            _tabPrecio.Click  += (s, e) => SetActiveTab(1);
-            _tabManual.Click  += (s, e) => SetActiveTab(2);
+            _tabManual.Click  += (s, e) => SetActiveTab(1);
 
             Grid.SetColumn(_tabHorario, 0);
-            Grid.SetColumn(_tabPrecio,  1);
-            Grid.SetColumn(_tabManual,  2);
+            Grid.SetColumn(_tabManual,  1);
             grid.Children.Add(_tabHorario);
-            grid.Children.Add(_tabPrecio);
             grid.Children.Add(_tabManual);
             border.Child = grid;
             return border;
@@ -328,11 +321,9 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         private void SetActiveTab(int idx)
         {
             _tabHorario.SetActive(idx == 0);
-            _tabPrecio.SetActive(idx == 1);
-            _tabManual.SetActive(idx == 2);
+            _tabManual.SetActive(idx == 1);
             _panelHorario.Visibility = idx == 0 ? Visibility.Visible : Visibility.Collapsed;
-            _panelPrecio.Visibility  = idx == 1 ? Visibility.Visible : Visibility.Collapsed;
-            _panelManual.Visibility  = idx == 2 ? Visibility.Visible : Visibility.Collapsed;
+            _panelManual.Visibility  = idx == 1 ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // ── Tab panels ─────────────────────────────────────────
@@ -348,15 +339,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _panelHorario.Children.Add(_scheduleForm);
             _panelHorario.Children.Add(_scheduleCountdown);
             wrap.Children.Add(_panelHorario);
-
-            // Precio
-            _panelPrecio = new StackPanel { Visibility = Visibility.Collapsed };
-            _precioForm   = BuildPrecioForm();
-            _precioActive = BuildPrecioActive();
-            _precioActive.Visibility = Visibility.Collapsed;
-            _panelPrecio.Children.Add(_precioForm);
-            _panelPrecio.Children.Add(_precioActive);
-            wrap.Children.Add(_panelPrecio);
 
             // Manual
             _panelManual = new StackPanel { Visibility = Visibility.Collapsed };
@@ -438,58 +420,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _btnStopH = NY930Theme.ActionButton("STOP", danger: true);
             _btnStopH.Click += (s, e) => DesactivarHorario();
             Grid.SetColumn(_btnStopH, 1); row.Children.Add(_btnStopH);
-
-            stack.Children.Add(row);
-            return stack;
-        }
-
-        private StackPanel BuildPrecioForm()
-        {
-            var stack = new StackPanel();
-            var row = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var lbl = NY930Theme.FieldLabel("Precio");
-            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
-
-            _priceInput = NY930Theme.FInput("28000.00", 80);
-            _priceInput.HorizontalAlignment = HorizontalAlignment.Center;
-            Grid.SetColumn(_priceInput, 1); row.Children.Add(_priceInput);
-
-            _btnActivarP = NY930Theme.ActionButton("ACTIVAR");
-            _btnActivarP.Click += (s, e) => ActivarPrecio();
-            Grid.SetColumn(_btnActivarP, 2); row.Children.Add(_btnActivarP);
-
-            stack.Children.Add(row);
-            return stack;
-        }
-
-        private StackPanel BuildPrecioActive()
-        {
-            var stack = new StackPanel();
-            var row = new Grid();
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var lbl = NY930Theme.FieldLabel("Precio");
-            Grid.SetColumn(lbl, 0); row.Children.Add(lbl);
-
-            _precioActiveTb = new TextBlock
-            {
-                Text = "—", FontFamily = NY930Theme.MonoFont,
-                FontSize = 14, FontWeight = FontWeights.Bold,
-                Foreground = NY930Theme.GoldLightBrush,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(_precioActiveTb, 1); row.Children.Add(_precioActiveTb);
-
-            _btnStopP = NY930Theme.ActionButton("STOP", danger: true);
-            _btnStopP.Click += (s, e) => DesactivarPrecio();
-            Grid.SetColumn(_btnStopP, 2); row.Children.Add(_btnStopP);
 
             stack.Children.Add(row);
             return stack;
@@ -652,7 +582,12 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         {
             var stack = new StackPanel { Margin = new Thickness(9, 10, 9, 14) };
             _btnApply = NY930Theme.ApplyButton("▶ Aplicar cambios");
-            _btnApply.Click += (s, e) => { ApplyParametersToStrategy(); FlashApply(); };
+            _btnApply.Click += (s, e) =>
+            {
+                if (!ValidateInputs()) return;
+                ApplyParametersToStrategy();
+                FlashApply();
+            };
             _btnChangeStrat = NY930Theme.ApplyButton("↩ Cambiar de estrategia");
             _btnChangeStrat.Margin = new Thickness(0, 5, 0, 0);
             _btnChangeStrat.Click += (s, e) => _shell.Show(new NY930HomeView(_shell));
@@ -681,6 +616,18 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // ── Schedule activate/deactivate ──────────────────────
         private void ActivarHorario()
         {
+            if (!ValidateInputs()) return;
+            if (_selectedSide != "buy" && _selectedSide != "sell")
+            {
+                FlashError(_btnBuy);
+                FlashError(_btnSell);
+                MessageBox.Show(
+                    "Seleccione BUY o SELL antes de activar la entrada por horario.",
+                    "NY930",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (!RequireHedgeAttached()) return;
             // Send all params + arm Time mode so the strategy waits
             // for the configured Hour/Minute/Second instead of trying
             // to fire immediately.
@@ -701,6 +648,10 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
 
             _scheduleForm.Visibility      = Visibility.Collapsed;
             _scheduleCountdown.Visibility = Visibility.Visible;
+            // Per client video 8: once Horario is armed, the Manual
+            // tab is no longer a valid entry path — disable it until
+            // the user presses STOP or the strategy resets.
+            SetManualTabEnabled(false);
             RefreshCountdown();
         }
 
@@ -714,6 +665,17 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
             _scheduleCountdown.Visibility = Visibility.Collapsed;
             _countdownTb.Text = "00:00:00";
             _countdownTb.Foreground = NY930Theme.GoldLightBrush;
+            SetManualTabEnabled(true);
+        }
+
+        private void SetManualTabEnabled(bool enabled)
+        {
+            if (_tabManual == null) return;
+            _tabManual.IsEnabled = enabled;
+            _tabManual.Opacity   = enabled ? 1.0 : 0.4;
+            _tabManual.Cursor    = enabled
+                ? System.Windows.Input.Cursors.Hand
+                : System.Windows.Input.Cursors.Arrow;
         }
 
         private void RefreshCountdown()
@@ -733,45 +695,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 ? NY930Theme.RedBrush : NY930Theme.GoldLightBrush;
         }
 
-        // ── Precio activate / deactivate ──────────────────────
-        private void ActivarPrecio()
-        {
-            double price;
-            if (!double.TryParse(_priceInput.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out price)
-                || price <= 0)
-            {
-                FlashError(_priceInput);
-                return;
-            }
-            // Direction is required for Price mode — the strategy
-            // needs to know whether to enter long or short when the
-            // trigger fires. Without a side selected we'd just wait
-            // forever, so flag it to the user.
-            if (_selectedSide != "buy" && _selectedSide != "sell")
-            {
-                FlashError(_btnBuy);
-                FlashError(_btnSell);
-                return;
-            }
-
-            _precioActiveTb.Text = price.ToString("N2", CultureInfo.CurrentCulture);
-            _precioForm.Visibility   = Visibility.Collapsed;
-            _precioActive.Visibility = Visibility.Visible;
-
-            // Send all parameters with EntryMode=Price + EntryPrice.
-            // Hedge.cs reads these and arms _priceEntryArmed in
-            // OnMarketData (see Hedge.cs lines 1708-1731).
-            ApplyParametersToStrategy(entryMode: "Price", entryPrice: price);
-        }
-
-        private void DesactivarPrecio()
-        {
-            _precioActive.Visibility = Visibility.Collapsed;
-            _precioForm.Visibility   = Visibility.Visible;
-            // Disarm price monitoring at the strategy level.
-            ApplyParametersToStrategy(entryMode: "Manual");
-        }
-
         private void FlashError(Control c)
         {
             var orig = c.BorderBrush;
@@ -784,23 +707,94 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
         // ── Manual entry ──────────────────────────────────────
         private void DoManualEntry()
         {
-            // Manual mode implies the strategy should NOT wait for a
-            // schedule or price trigger — fire immediately on the
-            // selected side.
+            if (!ValidateInputs()) return;
+            // Require a side before sending the order.
+            if (_selectedSide != "buy" && _selectedSide != "sell")
+            {
+                FlashError(_btnBuy);
+                FlashError(_btnSell);
+                MessageBox.Show(
+                    "Seleccione BUY o SELL antes de presionar COMPRAR AHORA.",
+                    "NY930",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            // Strategy must be running on a chart for the order to
+            // actually fire — otherwise we just queue commands no one
+            // reads. Tell the user what to do instead of silently
+            // doing nothing.
+            if (!RequireHedgeAttached()) return;
+
             ApplyParametersToStrategy(entryMode: "Manual");
             if (_selectedSide == "buy")
                 NY930Bridge.RequestHedgeAction(new NY930Action { Type = NY930ActionType.HedgeBuyNow });
             else if (_selectedSide == "sell")
                 NY930Bridge.RequestHedgeAction(new NY930Action { Type = NY930ActionType.HedgeSellNow });
-            else
-                FlashError(_btnBuy);
+        }
+
+        // Returns false (and shows a clear dialog) if the Apertura
+        // strategy is not currently attached + enabled on any chart.
+        // Used as a guard before any action that would queue an
+        // order: ACTIVAR, COMPRAR AHORA.
+        private static bool RequireHedgeAttached()
+        {
+            if (NY930Bridge.HedgeAttached) return true;
+            MessageBox.Show(
+                "La estrategia 'Apertura' no está activa en ningún gráfico.\n\n" +
+                "Para que NY930 envíe la orden, primero adjunte la estrategia:\n\n" +
+                "1. Clic derecho en el gráfico → Strategies\n" +
+                "2. Seleccione 'Apertura' en la lista\n" +
+                "3. Configure parámetros y haga clic en Enable",
+                "NY930 — Estrategia no adjunta",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        // ── Input validation (v1.5) ────────────────────────────
+        private bool ValidateInputs()
+        {
+            int v;
+            bool ok = true;
+            // Time: HH 1-12, MM 0-59, SS 0-59
+            if (!NY930Theme.ValidateIntRange(_hh, 1, 12, out v)) ok = false;
+            if (!NY930Theme.ValidateIntRange(_hm, 0, 59, out v)) ok = false;
+            if (!NY930Theme.ValidateIntRange(_hs, 0, 59, out v)) ok = false;
+            // Contratos >= 1, SL/TP >= 1
+            int totalQty = 0;
+            if (!NY930Theme.ValidateIntRange(_cfgQty, 1, int.MaxValue, out totalQty)) ok = false;
+            if (!NY930Theme.ValidateIntRange(_cfgSl,  1, int.MaxValue, out v))        ok = false;
+            if (!NY930Theme.ValidateIntRange(_cfgTp,  1, int.MaxValue, out v))        ok = false;
+
+            // Partials cross-rule when enabled.
+            if (_accPar != null && _accPar.IsOn)
+            {
+                int p1t, p1q, p2t, p2q;
+                bool p1tOk = NY930Theme.ValidateIntRange(_p1Ticks, 0, int.MaxValue, out p1t);
+                bool p1qOk = NY930Theme.ValidateIntRange(_p1Qty,   0, int.MaxValue, out p1q);
+                bool p2tOk = NY930Theme.ValidateIntRange(_p2Ticks, 0, int.MaxValue, out p2t);
+                bool p2qOk = NY930Theme.ValidateIntRange(_p2Qty,   0, int.MaxValue, out p2q);
+                if (!p1tOk || !p1qOk || !p2tOk || !p2qOk) ok = false;
+                if (p1qOk && p2qOk && totalQty > 0 && (p1q + p2q) > totalQty)
+                {
+                    NY930Theme.FlashInvalid(_p1Qty);
+                    NY930Theme.FlashInvalid(_p2Qty);
+                    ok = false;
+                }
+                if (p1tOk && p2tOk && p2t > 0 && p2t <= p1t)
+                {
+                    NY930Theme.FlashInvalid(_p2Ticks);
+                    ok = false;
+                }
+            }
+            return ok;
         }
 
         // ── Apply parameters to strategy ──────────────────────
-        // entryMode/entryPrice are passed by ActivarHorario / Activar
-        // Precio / DoManualEntry so the strategy knows which entry
-        // path to arm. Null = leave unchanged.
-        private void ApplyParametersToStrategy(string entryMode = null, double? entryPrice = null)
+        // entryMode is passed by ActivarHorario / DesactivarHorario /
+        // DoManualEntry so the strategy knows which entry path to
+        // arm. Null = leave unchanged. v1.5 dropped the "Price" mode;
+        // only "Time" and "Manual" are sent now.
+        private void ApplyParametersToStrategy(string entryMode = null)
         {
             int hh = ParseInt(_hh.Text) ?? 9;
             int mm = ParseInt(_hm.Text) ?? 29;
@@ -822,7 +816,6 @@ namespace NinjaTrader.NinjaScript.AddOns.NY930
                 TakeProfitTicks = ParseInt(_cfgTp.Text),
                 Direction   = direction,
                 EntryMode   = entryMode,
-                EntryPrice  = entryPrice,
 
                 EnableBreakeven  = _accBe.IsOn,
                 EnableTrailing   = _accTs.IsOn,
